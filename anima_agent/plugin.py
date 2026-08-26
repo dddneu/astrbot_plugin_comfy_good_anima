@@ -36,6 +36,7 @@ from anima_agent.agent.pipeline import (
     _submitted_positive_text,
 )
 from anima_agent.comfyui.client import ComfyUIClient
+from anima_agent.comfyui.event_router import ComfyUIInterrupted
 from anima_agent.session import SessionContext, SessionStore
 from anima_agent.task_tracker import TaskTracker
 
@@ -426,6 +427,15 @@ class AnimaAgentPlugin:
                 random_artist_fixed=self.random_artist_fixed,
                 user_batch_size=user_batch_size,
             )
+        except ComfyUIInterrupted:
+            # 用户主动取消(/draw-cancel)。取消链路已通过 tracker.mark_cancelled 收尾,
+            # 这里不再 set_failed,避免状态被覆盖。也不向用户报"生成失败"。
+            logger.info("generate cancelled by user (task_id=%s)", task_id)
+            return {
+                "status": "cancelled",
+                "message": "已取消",
+                "prompt_id": "",
+            }
         except Exception as e:
             logger.exception("generate failed")
             await self.tracker.set_failed(task_id)
@@ -561,6 +571,14 @@ class AnimaAgentPlugin:
                         await self.tracker.set_completed(task_id)
                 # 仅首次 redraw 换画师,后续 redraw 沿用新画师(只换 seed)
                 next_artist = None
+        except ComfyUIInterrupted:
+            # 取消路径:tracker 已由 cancel_task 收尾,这里不覆盖状态。
+            logger.info("redraw cancelled by user (task_id=%s)", task_id)
+            return {
+                "status": "cancelled",
+                "message": "已取消",
+                "prompt_id": "",
+            }
         except Exception as e:
             logger.exception("redraw failed")
             if task_id:
@@ -674,11 +692,16 @@ class AnimaAgentPlugin:
         if not detail:
             return True, "任务已取消"
 
-        # detail 是 comfyui_prompt_id,需要中断 ComfyUI
+        # detail 是 comfyui_prompt_id,需要中断 ComfyUI。
+        # 先把 tracker 标 cancelled,再发中断信号:ComfyUI 收到后通过 ws 推
+        # execution_interrupted,await_prompt 抛 ComfyUIInterrupted。
+        # 不论后续 set_failed 是否覆盖(老路径),tracker 已收尾,/draw-list 不再
+        # 显示 RUNNING 鬼魂。
+        await self.tracker.set_cancelled(task_id)
         success = await self.client.interrupt()
         if success:
             return True, "已发送中断信号,任务将被停止"
-        return True, "任务已标记取消(但 ComfyUI 中断失败,请手动检查)"
+        return True, "已标记取消(ComfyUI 中断失败,请手动检查)"
 
     # ---- 环境自检(/draw_check)----
 

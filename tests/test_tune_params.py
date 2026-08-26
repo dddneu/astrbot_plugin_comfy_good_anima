@@ -47,3 +47,45 @@ def test_safety_reject():
         raise SafetyReject("测试拒绝原因")
     except SafetyReject as e:
         assert e.reason == "测试拒绝原因"
+
+
+def test_safety_reject_not_retried():
+    """NSFW 安全拒绝应当立即抛穿,不应在主循环被当成「解析失败」重试 3 次。
+
+    复现历史上 _draft_impl 把 SafetyReject 当 ValueError/KeyError/...抓住,
+    当作"解析失败"重试 3 次,用户看到的是「simple agent 重试 2 次后
+    仍无法解析 LLM 输出: brief 缺失或不是对象」,而不是真正的 reject 原因。
+
+    修复后:第 1 次主循环 LLM 返回 reject → 立刻抛 SafetyReject,
+    不再调第 2、3 次主循环(前置 resolve_cn_tags NER 仍会调 1 次,这是正常流程)。
+    """
+    import asyncio
+    from anima_agent.agent.react_agent import SimpleAgent, SafetyReject
+
+    reject_json = '{"intent": "reject", "reject_reason": "包含裸露角色,拒绝出图"}'
+
+    main_loop_calls = {"n": 0}
+
+    def fake_llm(system, user):
+        # 前置 NER 阶段也会调,只统计主循环那一帧(prompt 包含 JSON 骨架)
+        if "JSON 骨架" in user or "JSON 骨架" in system:
+            main_loop_calls["n"] += 1
+            return reject_json
+        # NER/Pinyin fallback:随便给个空对象就行
+        return ""
+
+    agent = SimpleAgent(fake_llm)
+
+    async def run():
+        try:
+            await agent.draft("画一个赤裸的角色")
+        except SafetyReject as e:
+            assert e.reason == "包含裸露角色,拒绝出图"
+            assert main_loop_calls["n"] == 1, (
+                "SafetyReject 不应让主循环重试,"
+                f"但主循环 LLM 被调用了 {main_loop_calls['n']} 次"
+            )
+            return
+        raise AssertionError("应当抛 SafetyReject,实际没抛")
+
+    asyncio.run(run())

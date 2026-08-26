@@ -903,6 +903,10 @@ class AnimaStar(Star):
 
         if result.get("image_bytes_list"):
             await self._send_image(event, result["image_bytes_list"])
+        elif result["status"] == "cancelled":
+            # 取消路径:tracker 已收尾,不发进度消息(避免用户收到"正在构思"
+            # 紧接着又收到"已取消"的迷惑串)。
+            return
         elif result["status"] == "queued":
             # submit 模式:起后台任务,生成完主动推送(持引用防 GC)
             task = asyncio.create_task(self._push_when_done(event, result["prompt_id"]))
@@ -1094,7 +1098,8 @@ class AnimaStar(Star):
         """统一发图入口(支持单图 bytes 或多图 list)。
 
         单图 → _deliver_result 走原路径;多图 → PDF 模式下合成多页 PDF,
-        直接发图模式下一张张压缩发送(顺序保持,失败时 fallback 到原图本地暂存)。
+        直接发图模式下先尝试「Nodes 合并转发」(每张图独立 Node),
+        失败再回退逐张发送。
         """
         if isinstance(images, (bytes, bytearray)):
             await self._deliver_result(event, images, note="")
@@ -1110,10 +1115,46 @@ class AnimaStar(Star):
             await self._deliver_result(event, imgs, note=f"共 {len(imgs)} 张")
             return
 
-        # 直接发图模式:逐张发(每张独立重试/独立 fallback)
-        for i, img in enumerate(imgs):
-            note = f"({i + 1}/{len(imgs)})" if len(imgs) > 1 else ""
-            await self._deliver_result(event, img, note=note)
+        # 直接发图模式:优先尝试「合并转发 Nodes」,每张图独立一个 Node,
+        # 由平台把多条消息合成一条转发卡片。任一 Node 失败 → 回退逐张发送。
+        ok = await self._send_images_as_merge_nodes(event, imgs)
+        if not ok:
+            logger.warning(
+                "[send] 合并转发多图发送失败,回退到逐张发送(%d 张)",
+                len(imgs),
+            )
+            for i, img in enumerate(imgs):
+                note_i = f"({i + 1}/{len(imgs)})" if len(imgs) > 1 else ""
+                await self._deliver_result(event, img, note=note_i)
+
+    async def _send_images_as_merge_nodes(
+        self,
+        event: AstrMessageEvent,
+        imgs: list[bytes],
+    ) -> bool:
+        """把多张图打包成「合并转发 Nodes」(每张图独立一个 Node)一次发送。
+
+        - True  = 合并转发整条成功送达(平台支持 Nodes)。
+        - False = 整条合并转发失败,调用方应回退到逐张发送。
+
+        类比 PDF 群聊路径 `_deliver_result` 中的 merge_nodes:
+        每张图都是独立 Node(uin=sender, content=[Image]),平台把多条消息
+        合成一条转发卡片,任一 Node 渲染失败只影响那一张,而不是整条挂掉。
+        """
+        if not imgs:
+            return True
+
+        sender_uin = str(event.get_self_id())
+        nodes = Nodes([])
+        for img in imgs:
+            compressed, _ext = _compress_image_for_send(img)
+            nodes.nodes.append(
+                Node(uin=sender_uin, content=[self._image(compressed)])
+            )
+        return await _safe_send(
+            event, MessageChain([nodes]),
+            op_label=f"多图合并转发({len(imgs)}张)",
+        )
 
     async def _deliver_result(
         self,
@@ -1276,14 +1317,17 @@ class AnimaStar(Star):
         return Image.fromFileSystem(f.name)
 
     async def terminate(self):
-        # 先取消后台推送任务,再关 ComfyUI 客户端
+        # 后台推送任务里嵌着 wait_for_output(最长 30 分钟)。
+        # 插件卸载必须立刻返回,否则 /重启 会卡住。给出 5 秒收尾预算。
         for task in list(self._bg_tasks):
             task.cancel()
-        for task in list(self._bg_tasks):
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+        if self._bg_tasks:
+            await asyncio.wait(
+                list(self._bg_tasks),
+                timeout=5.0,
+                return_when=asyncio.ALL_COMPLETED,
+            )
+        self._bg_tasks.clear()
         try:
             await self.core.close()
         except Exception:

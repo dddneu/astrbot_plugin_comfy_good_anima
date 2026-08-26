@@ -194,6 +194,11 @@ class SimpleAgent:
             )
             try:
                 return self._parse(resp)
+            except SafetyReject:
+                # 安全拒绝:绝不重试(LLM 一致拒绝同一内容,重试无意义),
+                # 立刻穿透到 draft() 层的外层 except,再由 pipeline 拦成
+                # "内容不符合安全规范: <reason>"。
+                raise
             except (ValueError, KeyError, TypeError, ValidationError) as e:
                 last_err = e
                 logger.warning(
