@@ -1,0 +1,188 @@
+{
+  "description": "组合参考图工作流:IP-Adapter 前 0~0.5 步注入全局语义(色块/基础特征)后退出,InstantReferenceLoRA 后 0.5~1.0 步接管精细细节。两者分工明确,特征不互相污染",
+  "enabled": true,
+  "parameters": {
+    "prompt_11": {
+      "node_id": "11",
+      "field": "text",
+      "required": true,
+      "type": "string",
+      "description": "Text prompt"
+    },
+    "prompt_12": {
+      "node_id": "12",
+      "field": "text",
+      "required": true,
+      "type": "string",
+      "description": "Negative prompt"
+    },
+    "width": {
+      "node_id": "28",
+      "field": "width",
+      "required": false,
+      "type": "int",
+      "description": "Image width"
+    },
+    "height": {
+      "node_id": "28",
+      "field": "height",
+      "required": false,
+      "type": "int",
+      "description": "Image height"
+    },
+    "batch_size": {
+      "node_id": "28",
+      "field": "batch_size",
+      "required": false,
+      "type": "int",
+      "description": "Batch size"
+    },
+    "seed": {
+      "node_id": "19",
+      "field": "seed",
+      "required": false,
+      "type": "int",
+      "description": "Random seed"
+    },
+    "steps": {
+      "node_id": "19",
+      "field": "steps",
+      "required": false,
+      "type": "int",
+      "description": "Generation steps"
+    },
+    "filename_prefix": {
+      "node_id": "52",
+      "field": "filename_prefix",
+      "required": false,
+      "type": "string",
+      "description": "Output file prefix"
+    },
+    "rtx_vsr_quality": {
+      "node_id": "60",
+      "field": "quality",
+      "required": false,
+      "type": "string",
+      "description": "RTX VSR quality: LOW, MEDIUM, HIGH, ULTRA"
+    },
+    "fls_cfg": {
+      "node_id": "19",
+      "field": "cfg",
+      "required": false,
+      "type": "float",
+      "description": "CFG 引导强度(默认 4.5)。包含多层复杂细节时拉高至 6.0-7.5,增强文本服从度"
+    },
+    "fls_sharpness": {
+      "node_id": "19",
+      "field": "sharpness",
+      "required": false,
+      "type": "float",
+      "description": "FLSampler 锐度(默认 0.5)。发糊时提高至 0.7-0.9 强化边缘清晰度;噪点/过锐时降低"
+    },
+    "fls_fovea_strength": {
+      "node_id": "19",
+      "field": "fovea_strength",
+      "required": false,
+      "type": "float",
+      "description": "FLSampler 纹理强度(默认 3.0)。纹理不足时小幅提高"
+    },
+    "fls_mask_inertia": {
+      "node_id": "19",
+      "field": "mask_inertia",
+      "required": false,
+      "type": "float",
+      "description": "FLSampler 焦点惯性(默认 0.85)。焦点跳动/忽清忽糊时提高"
+    },
+    "fls_layer_filter": {
+      "node_id": "19",
+      "field": "layer_filter",
+      "required": false,
+      "type": "string",
+      "description": "U-Net 分层过滤(如 OUT 表示只在 OUT Blocks 高频层注入特征,锁定底层大构图)"
+    },
+    "fls_step_decay": {
+      "node_id": "19",
+      "field": "step_decay",
+      "required": false,
+      "type": "float",
+      "description": "步数衰减系数(0-1,默认 0)。非零时后续步逐步降低 cfg,前中期强引导,后期自由生成"
+    },
+    "ip_adapter_strength": {
+      "node_id": "69",
+      "field": "strength",
+      "required": false,
+      "type": "float",
+      "description": "IP-Adapter 强度 (0-2,默认 1.0)。面 部特征过强/衣服走样时降至 0.6-0.75"
+    },
+    "ip_adapter_start_at": {
+      "node_id": "69",
+      "field": "start_at",
+      "required": false,
+      "type": "float",
+      "description": "IP-Adapter 开始步数(0~1,默认 0.0)"
+    },
+    "ip_adapter_end_at": {
+      "node_id": "69",
+      "field": "end_at",
+      "required": false,
+      "type": "float",
+      "description": "IP-Adapter 结束步数(0~1,默认 0.45)。让 IP-Adapter 只在前中期注入后尽早退场,把后期精装修交还给 InstantReferenceLoRA"
+    },
+    "ip_adapter_layer_filter": {
+      "node_id": "69",
+      "field": "layer_filter",
+      "required": false,
+      "type": "string",
+      "description": "IP-Adapter 分层过滤(如 OUT 表示只在 OUT Blocks 注入,锁定高层高频特征)"
+    },
+    "ip_adapter_ref_image_size": {
+      "node_id": "69",
+      "field": "ref_image_size",
+      "required": false,
+      "type": "int",
+      "description": "参考图尺寸 (256-1024)"
+    },
+    "ip_adapter_siglip_layer": {
+      "node_id": "69",
+      "field": "siglip_layer",
+      "required": false,
+      "type": "int",
+      "description": "SigLIP 层 (-8 to 0)"
+    },
+    "ip_adapter_ip_cfg_scale": {
+      "node_id": "69",
+      "field": "ip_cfg_scale",
+      "required": false,
+      "type": "float",
+      "description": "IP CFG 强度 (0-10)"
+    },
+    "negative_repel": {
+      "node_id": "12",
+      "field": "text",
+      "required": false,
+      "type": "string",
+      "description": "追加到负面提示词(用逗号分隔)。利用 CFG 排斥力逼迫模型生成复杂纹理,如 simplified, plain clothes, missing details, blurry"
+    },
+    "instantref_start_at": {
+      "node_id": "72",
+      "field": "start_at",
+      "required": false,
+      "type": "float",
+      "description": "InstantReferenceLoRA 开始步数(0~1,默认 0.35,与 IP-Adapter 结束 0.45 短重叠,双机制强化身份/画风)"
+    },
+    "instantref_end_at": {
+      "node_id": "72",
+      "field": "end_at",
+      "required": false,
+      "type": "float",
+      "description": "InstantReferenceLoRA 结束步数(0~1,默认 1.0)"
+    },
+    "instantref_layer_filter": {
+      "node_id": "72",
+      "field": "layer_filter",
+      "required": false,
+      "type": "string",
+      "description": "分层过滤(如 OUT 表示只在 OUT Blocks 高频层注入)"
+    }
+  }
+}

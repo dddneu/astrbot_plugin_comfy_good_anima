@@ -1,0 +1,10 @@
+name: astrbot_plugin_comfy_good_anima
+display_name: Anima 画师
+desc: 基于 ComfyUI 的动漫生图 Agent。LLM 情境出稿 + Danbooru 标签校验 + 三层 Prompt 组装 + ReAct 自纠错,支持连续修改(继承 seed)、画师融合、画质参数排障。
+short_desc: ComfyUI 动漫生图 Agent,三层 Prompt + 标签校验
+help: "/draw <描述> 生图或修改上一张;/anima_status 查看状态;/draw_check 环境自检"
+version: 1.1.0
+author: anima-dev
+repo: https://github.com/yourname/astrbot_plugin_comfy_good_anima
+upstream: https://github.com/ShiroEirin/comfyui-good-anima
+astrbot_version: ">=4.16,<5"

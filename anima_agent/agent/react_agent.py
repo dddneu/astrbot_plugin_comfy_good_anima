@@ -1,0 +1,417 @@
+"""SimpleAgent —— 一次性出稿 + 多轮对话上下文。
+
+简化自 ReActDraftsman:
+- 移除工具循环(search_tags/tune_params/fix_workflow)
+- 保留多轮对话上下文(session_context)，用于修改意图的局部替换
+- 出稿使用 build_draftsman_prompt（一次性，模式注入由 workflow_id 自动完成）
+
+注意:此文件已被简化。若需要工具循环能力，请使用 draftsman_mode="react"。
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Callable, Optional
+
+from anima_agent.agent.compat import maybe_await
+from anima_agent.agent.draftsman import DraftResult
+from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
+from anima_agent.agent.prompts import build_draftsman_prompt, DRAFT_JSON_SKELETON
+from anima_agent.agent.utils import extract_json
+from pydantic import ValidationError
+
+logger = logging.getLogger(__name__)
+
+MAX_PARSE_RETRIES = 2
+
+
+class SafetyReject(Exception):
+    """安全审查拒绝:LLM 输出了 reject,直接终止出稿不 retry。"""
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(f"[安全审查拒绝] {reason}")
+
+
+# 保留 TUNE_PARAMS 以便其他模块引用
+TUNE_PARAMS: dict[str, tuple] = {
+    # FLSampler 参数(全部工作流)
+    "fls_sharpness": (0.0, 3.0, 0.5, "float"),
+    "fls_fovea_strength": (0.0, 6.0, 3.0, "float"),
+    "fls_mask_inertia": (0.0, 1.0, 0.85, "float"),
+    "fls_cfg": (1.0, 12.0, 4.5, "float"),     # 细节不足时拉高至 6.0-7.5
+    "fls_layer_filter": ("", "OUT", "", "str"),  # OUT=锁定高层高频层
+    "fls_step_decay": (0.0, 1.0, 0.0, "float"),
+    # IP-Adapter 参数(仅 *-ref 和 instantref-ipadapter 工作流)
+    "ip_adapter_strength": (0.0, 2.0, 1.0, "float"),  # 面部过强/衣服走样 → 降至 0.6-0.75
+    "ip_adapter_ref_image_size": (256, 1024, 512, "int"),
+    "ip_adapter_siglip_layer": (-8, 0, -1, "int"),
+    "ip_adapter_ip_cfg_scale": (0.0, 10.0, 4.0, "float"),
+    "ip_adapter_ip_cfg_separate": (0, 1, 0, "bool"),
+    "ip_adapter_use_lora": (0, 1, 1, "bool"),
+    "ip_adapter_start_at": (0.0, 1.0, 0.0, "float"),
+    "ip_adapter_end_at": (0.0, 1.0, 0.45, "float"),  # 降低让 IP-Adapter 尽早退场(默认 0.45)
+    "ip_adapter_layer_filter": ("", "OUT", "", "str"),
+    # 画师融合参数(仅 artist-mixer 工作流)
+    "artist_ema_alpha": (0.0, 1.0, 0.0, "float"),
+    "artist_lowrank_k": (1, 8, 1, "int"),
+    "artist_static_capture": (0, 1, 0, "bool"),
+    "artist_anchor_q": (0, 1, 0, "bool"),
+    # Instant Reference 参数(仅 instantref 工作流)
+    "instantref_model_strength": (0.0, 2.0, 1.2, "float"),
+    "instantref_clip_strength": (0.0, 2.0, 1.35, "float"),
+    "instantref_start_at": (0.0, 1.0, 0.35, "float"),
+    "instantref_end_at": (0.0, 1.0, 1.0, "float"),
+    "instantref_layer_filter": ("", "OUT", "", "str"),
+    # 参考图炼丹参数(仅 instantref 工作流;ReferenceTaggingOptions/ReferenceTrainOptions)
+    "ref_tag_general_threshold": (0.0, 1.0, 0.35, "float"),   # tagger 通用阈值,细节极复杂 → 0.25
+    "ref_tag_character_threshold": (0.0, 1.0, 0.85, "float"),  # tagger 角色阈值
+    "ref_train_network_dim": (0, 256, 0, "int"),   # 训练网络维度/rank,0=自动;复杂角色 → 64~128
+    "ref_train_steps": (0, 1000, 0, "int"),        # 训练步数,0=默认;强烈画风转换/细节极多 → 150~200
+}
+
+TUNE_PARAM_SCOPE = {
+    "fls_sharpness": "全部工作流:主体发糊 → 小幅提高(默认 0.5)",
+    "fls_fovea_strength": "全部工作流:纹理不足 → 小幅提高(默认 3.0)",
+    "fls_mask_inertia": "全部工作流:焦点跳动 → 提高(默认 0.85)",
+    "fls_cfg": "全部工作流:细节服从度弱 → 拉高至 6.0-7.5(默认 4.5)",
+    "fls_layer_filter": "全部工作流:OUT=只在高层高频层注入,锁定底层大构图",
+    "fls_step_decay": "全部工作流:步数衰减系数(默认 0),非零时前中期强引导后期自由生成",
+    "ip_adapter_strength": "参考图工作流:面部过强/衣服走样 → 降至 0.6-0.75(默认 1.0)",
+    "ip_adapter_ref_image_size": "参考图工作流:参考图边长(默认 512)",
+    "ip_adapter_siglip_layer": "参考图工作流:SIGLIP 特征层(默认 -1)",
+    "ip_adapter_ip_cfg_scale": "参考图工作流:IP-CFG 强度(默认 4.0)",
+    "ip_adapter_ip_cfg_separate": "参考图工作流:IP-CFG 分离模式",
+    "ip_adapter_use_lora": "参考图工作流:内置 LoRA(默认开启)",
+    "ip_adapter_start_at": "参考图工作流:IP-Adapter 开始步数(默认 0.0)",
+    "ip_adapter_end_at": "参考图工作流:IP-Adapter 结束步数(默认 0.45);降低让 IP-Adapter 尽早退场,把后期交给 InstantReferenceLoRA",
+    "ip_adapter_layer_filter": "参考图工作流:OUT=只在高层高频层注入",
+    "artist_ema_alpha": "画师融合:EMA α 混合(默认 0.0)",
+    "artist_lowrank_k": "画师融合:低秩维度(默认 1)",
+    "artist_static_capture": "画师融合:静态捕捉",
+    "artist_anchor_q": "画师融合:锚点 Q",
+    "instantref_model_strength": "Instant Reference:模型强度(默认 1.2,人物不像 → 提至 1.3-1.5)",
+    "instantref_clip_strength": "Instant Reference:CLIP 强度(默认 1.35,画风不像 → 提至 1.4-1.5)",
+    "instantref_start_at": "Instant Reference:开始步数(默认 0.35,与 IP-Adapter 结束衔接)",
+    "instantref_end_at": "Instant Reference:结束步数(默认 1.0)",
+    "instantref_layer_filter": "Instant Reference:OUT=只在高层高频层注入",
+}
+
+
+class SimpleAgent:
+    """一次性出稿 Agent，保留多轮对话上下文用于修改意图。
+
+    注意:此文件已被简化，出稿使用 Draftsman + build_draftsman_prompt。
+    """
+
+    def __init__(
+        self,
+        llm_complete: Callable[[str, str], str],
+        tag_service: Optional[object] = None,  # 保留参数以向后兼容（但不使用）
+        max_steps: int = 6,
+        nsfw: bool = False,
+        armor_break_prompt: str = "",
+    ):
+        self.llm_complete = llm_complete
+        self.nsfw = nsfw
+        self.armor_break_prompt = armor_break_prompt or ""
+
+    async def draft(
+        self,
+        user_prompt: str,
+        *,
+        session_context: Optional[str] = None,
+        nsfw: Optional[bool] = None,
+        workflow_id: str = "",
+        confirmed_artists: Optional[list[str]] = None,
+        ref_tags: Optional[str] = None,
+        character_sheet: Optional[str] = None,
+    ) -> DraftResult:
+        """一次性出稿。
+
+        Args:
+            session_context: 上一轮上下文，用于修改意图的局部替换
+            nsfw: 覆盖构造时的 nsfw 设置
+            workflow_id: 工作流 ID，用于模式注入
+            confirmed_artists: 标签库确认的画师名
+            ref_tags: 参考图打标结果
+            character_sheet: 会话角色记忆
+        """
+        try:
+            return await self._draft_impl(
+                user_prompt, session_context=session_context, nsfw=nsfw,
+                workflow_id=workflow_id, confirmed_artists=confirmed_artists,
+                ref_tags=ref_tags, character_sheet=character_sheet,
+            )
+        except SafetyReject as e:
+            raise  # 穿透到 pipeline 层处理
+
+    async def _draft_impl(
+        self,
+        user_prompt: str,
+        *,
+        session_context: Optional[str] = None,
+        nsfw: Optional[bool] = None,
+        workflow_id: str = "",
+        confirmed_artists: Optional[list[str]] = None,
+        ref_tags: Optional[str] = None,
+        character_sheet: Optional[str] = None,
+    ) -> DraftResult:
+        effective_nsfw = nsfw if nsfw is not None else self.nsfw
+
+        # Stage 1+2+3: NER 抽取 → 精确检索 → 拼音容错（前置翻译节点）
+        from anima_agent.tag_service.cn_tag_resolver import resolve_cn_tags
+
+        confirmed_en_tags, negative_elements = await resolve_cn_tags(
+            user_prompt, self.llm_complete
+        )
+
+        # 构建用户消息
+        user_msg = self._build_user_message(
+            user_prompt, session_context, confirmed_artists, ref_tags,
+            character_sheet, "", confirmed_en_tags,  # cn_hint 已废弃
+        )
+
+        # 一次性出稿，最多重试 2 次
+        last_err: Optional[Exception] = None
+        for attempt in range(MAX_PARSE_RETRIES + 1):
+            msg = user_msg
+            if last_err is not None:
+                msg += (
+                    f"\n\n你上一次的输出不符合 schema,校验错误:\n{str(last_err)[:800]}\n"
+                    "请严格按上面的 JSON 骨架重新输出完整 JSON,"
+                    "three_layer 必须包含 hard_tags / soft_phrases / nltags_block 三个字段,"
+                    "不要输出组装后的 prompt_11/prompt_12。"
+                )
+            resp = await maybe_await(
+                self.llm_complete(
+                    build_draftsman_prompt(
+                        nsfw=effective_nsfw,
+                        workflow_id=workflow_id,
+                        armor_break_prompt=self.armor_break_prompt,
+                    ),
+                    msg,
+                )
+            )
+            try:
+                return self._parse(resp)
+            except (ValueError, KeyError, TypeError, ValidationError) as e:
+                last_err = e
+                logger.warning(
+                    "simple agent attempt %d parse failed: %s", attempt, str(e)[:200]
+                )
+        raise ValueError(
+            f"simple agent 重试 {MAX_PARSE_RETRIES} 次后仍无法解析 LLM 输出: {last_err}"
+        )
+
+    def _build_user_message(
+        self,
+        user_prompt: str,
+        session_context: Optional[str],
+        confirmed_artists: Optional[list[str]] = None,
+        ref_tags: Optional[str] = None,
+        character_sheet: Optional[str] = None,
+        cn_hint: str = "",
+        confirmed_en_tags: Optional[list[str]] = None,
+    ) -> str:
+        parts = []
+        if ref_tags:
+            parts.append(
+                "参考图已自动打标(以下是图中真实内容的事实依据,出稿时采用,不要编造与它矛盾的内容):\n"
+                f"{ref_tags}\n"
+                "来源说明:[wd14] 是精确 tag 碎片(颜色/道具/数量/服装/**绘制技法 tag**/"
+                "画师元 tag),"
+                "[vlm] 是 Qwen3-VL 自然语言描述(身材/比例/五官,不含服装/发型——"
+                "那些由 [wd14] 打标,"
+                "若无 [style] 段,画风关键词可能混在 [vlm] 文本里,自行提取),"
+                "身材/五官细节优先采用 [vlm],服装/发型/画风以 [wd14] 为准;"
+                "[style] 是 Qwen-VL 的笼统画风描述(存在时)——精确画风以 [wd14] 的绘制技法"
+                "tag 为准(cel_shading/lineart/cinematic_lighting/depth_of_field 等,"
+                "忽略衣服/背景等实体词),用户没要求改画风时必须以技法 tag 高权重保留画风。\n"
+                "[wd14] 里的画师元 tag(如 @wlop / drawn by xxx)必须写进 tag_queries"
+                "(group='artist'),由 danbooru tagger 锚定确认。\n"
+                "⚠️ 处理用户修改指令时(如换装/加配饰/改发型):\n"
+                "  - 用户明确提到的维度,必须替换 tagger 的 tag(例:换校服 → hard_tags 用 school_uniform,不要保留原 white_dress)\n"
+                "  - **换装时(用户要求换衣服):旧衣服相关词只能写进 args.prompt_12(负面),格式 (旧衣服:1.3~1.5)**,如 (white dress, ribbon:1.4)。正向 prompt(hard_tags/nltags_block)里旧衣服相关的一个词都不能出现——旧衣服名词(green dress/gloves)、指代词(old outfit/original clothes)、替换句('no trace of the original ...'/'the old outfit is completely replaced ...'/'instead of the old ...')全都不行,CLIP 会把它们当真生成导致新旧衣服杂糅;nltags_block 只描述新衣服本身\n"
+                "  - 用户没提的维度,直接照抄 tagger tag(不要凭印象改写发色瞳色等)\n"
+                "  - 画风:用户没提改画风 → 保留 [wd14] 绘制技法 tag(高权重);用户指定画风 → 用用户指定的\n"
+                "  - 参考图炼丹(InstantReferenceLoRA 训练层):换装时**绝不能**把旧衣服写进 args.ref_tag_exclude\n"
+                "    (打标悖论:训练时没打标的视觉内容会被烤进角色,衣服就永远脱不下来)——exclude 只放想焊死的\n"
+                "    身份特征(1girl/solo/looking at viewer/发色/瞳色);旧衣服留在训练集里打标+靠负面 prompt 镇压。\n"
+                "    可选炼丹参数:ref_tag_prepend/ref_tag_append(画风词)、ref_tag_general_threshold(0.25~0.35)、\n"
+                "    ref_train_network_dim(0/64/128)、ref_train_steps(0/150~200),不需要就保持默认 0/空\n"
+                "  - 在 nltags_block 中明确写'保留什么 / 改变什么'"
+            )
+        elif character_sheet:
+            parts.append(
+                "本会话已认识的角色(来自之前的参考图打标,以下为角色设定):\n"
+                f"{character_sheet}\n"
+                "若用户没有要求换角色,保持该角色的外观一致(发色/瞳色/发型/服装等);"
+                "若用户明确描述了一个新角色,以用户最新描述为准。"
+                "\n⚠️ 用户修改指令只作用在用户提到的维度,其他维度保持角色设定不变。"
+            )
+
+        # Stage 1+2+3: 前置翻译节点已锁定角色/作品 tag，
+        # Draftsman 只负责补充动作/光影/服装等其他元素
+        if confirmed_en_tags:
+            parts.append(
+                "【前置系统已锁定】以下核心英文 Tag 必须完整包含在 hard_tags 中，"
+                "严禁改动或删除：\n  "
+                + ", ".join(confirmed_en_tags)
+                + "\n你的职责仅是根据用户意图，补充动作、光影、服装、镜头等其他元素的 Tag。"
+            )
+        if cn_hint and not confirmed_en_tags:
+            parts.append(cn_hint)
+
+        parts.append(f"用户请求:\n{user_prompt}")
+        if session_context:
+            parts.append(f"\n上一轮上下文(用于修改意图,做局部替换):\n{session_context}")
+        if confirmed_artists:
+            parts.append(
+                "\n标签库已确认以下名字是真实存在的 Danbooru 画师(artist):\n"
+                + ", ".join(confirmed_artists)
+                + "\n这些名字必须当画师处理:单画师写进 hard_tags 的 @画师;"
+                "用户明确要求融合多个时才填 artist_chain(不带@)。"
+                "不要把它们当成风格描述词。"
+            )
+        parts.append(
+            "\n请严格按以下 JSON 骨架输出(只输出 JSON,不要 markdown 代码块,"
+            f"字段名一个都不能改):\n{DRAFT_JSON_SKELETON}\n\n"
+            "注意:args 里不要给 prompt_11(由系统从 three_layer 组装);"
+            "three_layer 必须是三个字段的结构,不是拼接好的字符串。"
+            "tag_queries 列出需要校验的角色/作品/画师锚点。"
+        )
+        return "\n".join(parts)
+
+    def _parse(self, resp: str) -> DraftResult:
+        data = extract_json(resp)
+        if not data:
+            raise ValueError(
+                f"simple agent LLM 返回无法解析为 JSON (len={len(resp)}). "
+                f"前 500 字符: {resp[:500]!r}"
+            )
+
+        # 检查安全拒绝
+        intent = data.get("intent", "normal")
+        if intent == "reject":
+            raise SafetyReject(data.get("reject_reason", "内容不符合安全规范"))
+
+        brief = VisualBrief(**self._coerce_brief(data.get("brief")))
+        three = ThreeLayerPrompt(**self._coerce_three_layer(data.get("three_layer")))
+
+        args_data = dict(data.get("args") or {})
+
+        # 补默认
+        if not args_data.get("prompt_11"):
+            args_data["prompt_11"] = three.assemble()
+        if not args_data.get("prompt_12"):
+            args_data["prompt_12"] = self._default_negative(three)
+        if not args_data.get("filename_prefix"):
+            args_data["filename_prefix"] = self._default_filename_prefix(
+                brief, three, artist_chain=args_data.get("artist_chain")
+            )
+        args_data.setdefault("width", brief.canvas[0])
+        args_data.setdefault("height", brief.canvas[1])
+        args_data.setdefault("batch_size", 1)
+        args_data.setdefault("steps", 30)
+        args_data.setdefault("rtx_vsr_quality", "ULTRA")
+
+        args = AnimaArgs(**args_data)
+        tag_queries = data.get("tag_queries", [])
+        return DraftResult(
+            intent=intent,
+            brief=brief,
+            three_layer=three,
+            args=args,
+            tag_queries=tag_queries,
+        )
+
+    @staticmethod
+    def _coerce_three_layer(raw) -> dict:
+        """three_layer 字段别名容错。"""
+        if not isinstance(raw, dict):
+            raise KeyError("three_layer 缺失或不是对象")
+        aliases = {
+            "hard_tags": ("hard_tags", "hard", "tags", "hard_tag"),
+            "soft_phrases": ("soft_phrases", "soft", "phrases", "soft_phrase"),
+            "nltags_block": ("nltags_block", "nltags", "nl", "nl_tags"),
+        }
+        out = {}
+        for canon, keys in aliases.items():
+            for k in keys:
+                if k in raw:
+                    out[canon] = raw[k]
+                    break
+        missing = [c for c in aliases if c not in out]
+        if missing:
+            raise KeyError(
+                f"three_layer 缺少字段 {missing}(实际字段: {list(raw.keys())});"
+                "不要输出组装后的 prompt_11/prompt_12"
+            )
+        return out
+
+    @staticmethod
+    def _coerce_brief(raw) -> dict:
+        """brief 容错:缺失字段补默认,canvas 接受 list。"""
+        if not isinstance(raw, dict):
+            raise KeyError("brief 缺失或不是对象")
+        defaults = {
+            "subject": "unknown subject",
+            "scene_container": "simple background",
+            "action_relation": "standing",
+            "camera": "upper body",
+            "view_angle": "eye-level",
+            "canvas": (832, 1216),
+            "light_direction": "ambient light",
+            "subject_ratio": "medium",
+            "situation_cause_chain": "",
+        }
+        out = {k: raw.get(k, d) for k, d in defaults.items()}
+        canvas = out.get("canvas")
+        if isinstance(canvas, (list, tuple)) and len(canvas) == 2:
+            out["canvas"] = tuple(canvas)
+        return out
+
+    def _default_negative(self, three: ThreeLayerPrompt) -> str:
+        """LLM 漏负向时,按 SKILL 动态组装。"""
+        core = "worst quality, low quality, score_1, score_2, score_3, watermark, logo, text"
+        body = "bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, blurry"
+        all_tags = {t.lower() for t in three.hard_tags}
+        extra: list[str] = []
+        people = sum(1 for t in ["2girls", "2boys", "3girls", "3boys", "4girls", "4boys", "multiple girls", "multiple boys"] if t in all_tags)
+        if people >= 3:
+            extra.append("duplicate, twins, merged bodies, fused limbs, extra limbs, cloned face, same outfit")
+        elif people >= 2:
+            extra.append("merged bodies, extra arms, extra hands, cloned face")
+        if any(t in all_tags for t in ["close-up", "close up", "portrait"]):
+            extra.append("bad eyes, asymmetrical eyes, deformed face, blurry face")
+        if any(t in all_tags for t in ["full body", "full_body"]):
+            extra.append("extra limbs, missing limbs, disconnected limbs, bad feet")
+        if any(t in all_tags for t in ["from below", "from above", "low angle", "dutch angle"]):
+            extra.append("distorted face, bad perspective, broken joints")
+        return ", ".join([core, body] + extra)
+
+    @staticmethod
+    def _default_filename_prefix(
+        brief: VisualBrief, three: ThreeLayerPrompt, artist_chain: Optional[str] = None
+    ) -> str:
+        """LLM 漏 filename_prefix 时,按规则拼。"""
+        from datetime import date
+
+        artist = "none"
+        if artist_chain:
+            first = artist_chain.split(",")[0].strip()
+            first = first.strip("()")
+            if ":" in first:
+                first = first.split(":")[0]
+            artist = first.replace(" ", "_") or "none"
+        else:
+            for t in three.hard_tags:
+                if t.startswith("@"):
+                    artist = t.lstrip("@").replace(" ", "_")
+                    break
+        subject = brief.subject.replace(" ", "_")[:40] if brief.subject else "unknown"
+        return f"anima/{date.today().isoformat()}/anima_base_v1_0-{artist}-{subject}"
+
+
+# 向后兼容别名
+ReActDraftsman = SimpleAgent

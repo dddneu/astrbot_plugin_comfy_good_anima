@@ -1,0 +1,5 @@
+{
+  "description": "参考图自动打标(意图识别前运行):LoadImage → Resize → Miaoshouai_Tagger → captions。非生图工作流,参数由 tagger 模块运行时注入。",
+  "enabled": true,
+  "parameters": {}
+}

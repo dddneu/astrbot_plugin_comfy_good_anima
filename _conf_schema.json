@@ -1,0 +1,101 @@
+{
+  "comfyui_server": {
+    "description": "ComfyUI 服务端地址",
+    "type": "string",
+    "default": "127.0.0.1:8188"
+  },
+  "workflow": {
+    "description": "默认工作流 id(填 workflows/ 目录下的文件夹名)。可在 workflows/ 目录自行添加工作流(workflow.json + schema.json)后填写新 id,或用 /draw-workflows 查看可用列表",
+    "type": "string",
+    "default": "anima-txt2img-aesthetic-lora",
+    "options": [
+      "anima-txt2img-base",
+      "anima-txt2img-aesthetic-lora",
+      "anima-txt2img-aesthetic-lora-artist-mixer",
+      "anima-txt2img-aesthetic-lora-instantref",
+      "anima-txt2img-aesthetic-lora-instantref-ipadapter"
+    ]
+  },
+  "wait_for_image": {
+    "description": "等待出图模式:开启则在命令响应中等图(阻塞);关闭则提交后立即回复,生成完主动推送",
+    "type": "bool",
+    "default": true
+  },
+  "send_progress": {
+    "description": "发送「正在构思...」进度提示。协议端风控敏感时可关闭以减少消息量",
+    "type": "bool",
+    "default": true
+  },
+  "pdf_send": {
+    "description": "开启后,生成的图片转 PDF 并随机 base32 密码加密发送:先返回解密密码,再以合并转发消息发送 PDF 文件。关闭则直接发图片",
+    "type": "bool",
+    "default": false
+  },
+  "max_concurrent": {
+    "description": "全局并发生成上限(不同用户同时生图的最大数,超出自动排队)",
+    "type": "int",
+    "default": 3
+  },
+  "reply_quote": {
+    "description": "回复时引用触发消息(quote-reply),多人生成交错时明确各条结果对应谁",
+    "type": "bool",
+    "default": true
+  },
+  "reply_with_prompt": {
+    "description": "出图成功回复(「已生成[图片]」)里附带提交给 ComfyUI 的正向 CLIP prompt(CLIPTextEncode 正向节点实际收到的文本,超长自动截断)。排查「出图与预期不符」时开启,方便核对实际提交的 prompt",
+    "type": "bool",
+    "default": false
+  },
+  "nsfw": {
+    "description": "开启 NSFW 模式。Anima 模型用 NSFW 数据训练,开启后画质显著提升。不安全模式默认拒绝明确的 explicit 内容",
+    "type": "bool",
+    "default": false
+  },
+  "armor_break_prompt": {
+    "description": "破甲提示词(创作基调,可选)。非空时作为出稿 system prompt 的**第一步**注入 LLM(位于安全审查之前),用于设定创作基调/解除安全审查的过度拦截。留空则不注入",
+    "type": "string",
+    "default": ""
+  },
+  "ref_tagger": {
+    "description": "参考图自动打标:用户附带参考图时,先用 Miaoshouai_Tagger 打标图中内容,把真实 tag 注入 LLM 出稿(防乱编 prompt)。需 ComfyUI 安装 ComfyUI-Miaoshouai-Tagger;打标失败自动降级不阻断生图",
+    "type": "bool",
+    "default": true
+  },
+  "workflow_intent_map": {
+    "description": "意图关键词 → 工作流 ID 的映射。检测到用户 prompt 含某关键词时自动切换对应工作流(优先级从高到低)。值填 workflows/ 目录下的工作流 id(可自行添加),留空则关闭自动切换,完全交给 LLM 意图路由和参考图自动判断",
+    "type": "dict",
+    "default": {
+      "融合": "anima-txt2img-aesthetic-lora-artist-mixer",
+      "混合": "anima-txt2img-aesthetic-lora-artist-mixer",
+      "combine": "anima-txt2img-aesthetic-lora-artist-mixer",
+      "mix": "anima-txt2img-aesthetic-lora-artist-mixer",
+      "参考": "anima-txt2img-aesthetic-lora-instantref",
+      "参考图": "anima-txt2img-aesthetic-lora-instantref",
+      "ref": "anima-txt2img-aesthetic-lora-instantref",
+      "像她": "anima-txt2img-aesthetic-lora-instantref",
+      "像他": "anima-txt2img-aesthetic-lora-instantref"
+    }
+  },
+  "random_artist_mode": {
+    "description": "未指定画风时的画师策略。off=不注入,使用默认风格;pool=从 fjdk 翻译表 top-N 池随机抽取一个画师注入(避免每次画风雷同);fixed=固定使用下方 random_artist_fixed 指定的画师(英文 tag,不带 @,如 ke-ta / hisahiko)。也影响 /redraw 的随机换画师行为",
+    "type": "string",
+    "default": "pool",
+    "options": [
+      "off",
+      "pool",
+      "fixed"
+    ]
+  },
+  "random_artist_top_n": {
+    "description": "随机画师池大小(仅 pool 模式生效)。从 fjdk 翻译表按 post_count 降序取前 N 名,从中随机抽取 1 个。N=20 选热度最高的 20 位画师,N=100 范围更广更杂。范围 1~500",
+    "type": "int",
+    "minimum": 1,
+    "maximum": 500,
+    "default": 100
+  },
+  "random_artist_fixed": {
+    "description": "固定画师(仅 fixed 模式生效)。填 fjdk 翻译表里的英文 artist tag(不带 @,小写下划线)。例如 ke-ta / hisahiko / kou_hiyoyo。确认后会作为默认画师注入所有未指定画风的新图与重绘",
+    "type": "string",
+    "default": ""
+  }
+}

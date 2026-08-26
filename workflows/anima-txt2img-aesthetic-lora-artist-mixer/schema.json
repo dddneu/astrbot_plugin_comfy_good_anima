@@ -1,0 +1,97 @@
+{
+  "description": "",
+  "enabled": true,
+  "parameters": {
+    "prompt_12": {
+      "node_id": "12",
+      "field": "text",
+      "required": true,
+      "type": "string",
+      "description": "Negative prompt"
+    },
+    "prompt_11": {
+      "node_id": "65",
+      "field": "base_prompt",
+      "required": true,
+      "type": "string",
+      "description": "Positive prompt (base layer for artist mixing)"
+    },
+    "artist_chain": {
+      "node_id": "65",
+      "field": "artist_chain",
+      "required": false,
+      "type": "string",
+      "description": "Artist chain for mixing, e.g. 'wlop, (sakimichan:1.2), (krenz:0.7)'"
+    },
+    "rtx_vsr_quality": {
+      "node_id": "60",
+      "field": "quality",
+      "required": false,
+      "type": "string",
+      "description": "RTX VSR quality: LOW, MEDIUM, HIGH, ULTRA"
+    },
+    "seed": {
+      "node_id": "19",
+      "field": "seed",
+      "required": false,
+      "type": "int",
+      "description": "Random seed"
+    },
+    "steps": {
+      "node_id": "19",
+      "field": "steps",
+      "required": false,
+      "type": "int",
+      "description": "Generation steps"
+    },
+    "width": {
+      "node_id": "28",
+      "field": "width",
+      "required": false,
+      "type": "int",
+      "description": "Image width"
+    },
+    "height": {
+      "node_id": "28",
+      "field": "height",
+      "required": false,
+      "type": "int",
+      "description": "Image height"
+    },
+    "batch_size": {
+      "node_id": "28",
+      "field": "batch_size",
+      "required": false,
+      "type": "int",
+      "description": "Batch size"
+    },
+    "filename_prefix": {
+      "node_id": "52",
+      "field": "filename_prefix",
+      "required": false,
+      "type": "string",
+      "description": "Output file prefix"
+    },
+    "fls_sharpness": {
+      "node_id": "19",
+      "field": "sharpness",
+      "required": false,
+      "type": "float",
+      "description": "FLSampler 锐度。主体发糊时小幅提高(默认 0.5);过锐/噪点时降低"
+    },
+    "fls_fovea_strength": {
+      "node_id": "19",
+      "field": "fovea_strength",
+      "required": false,
+      "type": "float",
+      "description": "FLSampler 纹理强度。纹理不足时小幅提高(默认 3.0)"
+    },
+    "fls_mask_inertia": {
+      "node_id": "19",
+      "field": "mask_inertia",
+      "required": false,
+      "type": "float",
+      "description": "FLSampler 焦点惯性。焦点跳动/忽清忽糊时提高(默认 0.85)"
+    }
+  }
+}
