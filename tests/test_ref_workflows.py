@@ -323,7 +323,7 @@ async def test_patch_instant_ref_forces_anima_profile():
     assert n72["profile"] == "anima", n72   # 强制 Anima profile(默认可能是 sdxl)
     assert n72["steps"] == 50               # 节点默认值
     assert n72["tagging_options"] == ["73", 0]   # 模板已接 ReferenceTaggingOptions,打补丁不改
-    assert n72["model"] == ["63", 0]
+    assert n72["model"] == ["65", 0]             # 双新 LoRA(Smooth/illustrious)在 63 之后
     assert n72["images"] == ["71", 0]
     # CLIP/采样链已重接到 patched 输出
     assert patched["11"]["inputs"]["clip"] == ["72", 1]
@@ -382,6 +382,46 @@ def test_instantref_template_wires_tagging_train_options(workflow_id):
     assert n73["general_threshold"] == 0.35 and n73["character_threshold"] == 0.85
     n74 = wf["74"]["inputs"]
     assert n74["network_dim_override"] == 0 and n74["steps_override"] == 0
+
+
+# ── turbo 化:模型 + 双新 LoRA + 采样器 + batch 5(对齐用户新工作流图) ──────
+
+TURBO_WORKFLOWS = [
+    "anima-txt2img-aesthetic-lora",
+    "anima-txt2img-aesthetic-lora-artist-mixer",
+    "anima-txt2img-aesthetic-lora-instantref",
+    "anima-txt2img-aesthetic-lora-instantref-ipadapter",
+]
+
+
+@pytest.mark.parametrize("workflow_id", TURBO_WORKFLOWS)
+def test_aesthetic_lora_workflows_use_turbo_setup(workflow_id):
+    """所有 anima-txt2img-aesthetic-lora* 工作流对齐用户的新图:
+    turbo 模型 + 新增 Smooth_Booster_v5 / illustriousXLv01_stabilizer 两个 LoRA
+    + 采样器(euler/simple, steps 8, cfg 1)+ batch_size 5(一次出多张)。"""
+    from anima_agent.comfyui.schema_injector import load_workflow
+
+    wf = load_workflow(workflow_id)
+    # 基础模型 → turbo
+    booster = next(n for n in wf.values() if n["class_type"] == "AnimaBoosterLoader")
+    assert booster["inputs"]["model_name"] == "anima-turbo-v1.1.safetensors"
+    # 四个 LoRA(原两个 + 新增两个)
+    loras = {
+        n["inputs"]["lora_name"]: n["inputs"]["strength_model"]
+        for n in wf.values() if n["class_type"] == "LoraLoaderModelOnly"
+    }
+    assert loras["anima-highres-aesthetic-boost.safetensors"] == 1
+    assert loras["anima-base-1-masterpiece-v51.safetensors"] == 1
+    assert loras["Smooth_Booster_v5.safetensors"] == 0.25
+    assert loras["illustriousXLv01_stabilizer_v1.198.safetensors"] == 0.25
+    # 采样器:steps 8 / cfg 1 / euler / simple
+    sampler = next(n for n in wf.values() if n["class_type"] == "FLS_SamplerV4")
+    si = sampler["inputs"]
+    assert si["steps"] == 8 and si["cfg"] == 1.0
+    assert si["sampler_name"] == "euler" and si["scheduler"] == "simple"
+    # latent batch size 5(一次出多张)
+    latent = next(n for n in wf.values() if n["class_type"] == "EmptyLatentImage")
+    assert latent["inputs"]["batch_size"] == 5
 
 
 def test_patch_ref_training_options_applies_llm_args():

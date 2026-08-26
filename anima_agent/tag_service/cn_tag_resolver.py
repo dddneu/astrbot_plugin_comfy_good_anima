@@ -502,48 +502,52 @@ def _build_draftsman_hint(
 async def resolve_cn_tags(
     user_text: str,
     llm_complete,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]]:
     """前置翻译节点：NER → 精确检索 → 拼音容错。
 
     完全消化用户的中文角色/作品需求，
-    向 Draftsman 输出「绝对确定、不可篡改的纯净英文 Tag 列表」。
+    向 Draftsman 输出「绝对确定、不可篡改的纯净英文 Tag 列表」，
+    查无此 Tag 的内容降级到 nltags。
 
     Args:
         user_text: 用户原始中文 prompt
         llm_complete: LLM 完成回调，支持 sync 或 async
 
     Returns:
-        (confirmed_tags, negative_elements)
+        (confirmed_tags, nltags, negative_elements)
         - confirmed_tags: 绝对确定的英文 tag 列表（可直接硬编码进 hard_tags）
+        - nltags: 降级到自然语言的原文列表（交给 CLIP/T5 自行泛化）
         - negative_elements: 用户明确排除的元素（原样透传）
     """
     from anima_agent.tag_service._ner import extract_entities
     from anima_agent.tag_service._retrieval import get_engine
 
     if not user_text or not user_text.strip():
-        return [], []
+        return [], [], []
 
     # Stage 1: LLM NER
     ner_result = await extract_entities(user_text, llm_complete)
     if not ner_result.success:
         logger.warning("[resolve_cn_tags] NER 失败，降级返回空")
-        return [], []
+        return [], [], []
 
     if not ner_result.characters and not ner_result.negative_elements:
-        return [], []
+        return [], [], []
 
     # Stage 2+3: 检索
     engine = get_engine()
     retrieval = engine.resolve(ner_result)
 
-    confirmed = [tag.en_tag for tag in retrieval.resolved]
+    confirmed = [tag.en_tag for tag in retrieval.resolved if not tag.fallback_nl]
+    nltags = [tag.original_name for tag in retrieval.resolved if tag.fallback_nl]
     negative = retrieval.negative_elements
 
-    logger.info(
-        "[resolve_cn_tags] 原文 %r → confirmed=%s, unresolved=%s",
-        user_text[:50], confirmed, retrieval.unresolved,
-    )
-    return confirmed, negative
+    if nltags:
+        logger.info(
+            "[resolve_cn_tags] 原文 %r → confirmed=%s, nltags=%s",
+            user_text[:50], confirmed, nltags,
+        )
+    return confirmed, nltags, negative
 
 
 # =============================================================================

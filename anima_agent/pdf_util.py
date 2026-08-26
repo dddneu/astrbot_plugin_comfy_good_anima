@@ -11,11 +11,14 @@ import io
 import secrets
 
 
-def image_to_encrypted_pdf(image_bytes: bytes) -> tuple[str, bytes]:
-    """图片 bytes → 随机 base32 密码加密的 PDF。
+def image_to_encrypted_pdf(images) -> tuple[str, bytes]:
+    """图片(bytes 或 bytes 列表)→ 随机 base32 密码加密的 PDF。
+
+    batch_size>1 一次出多张时传 bytes 列表 → 合并为**多页** PDF;
+    单张传 bytes 同样兼容(1 页)。
 
     Args:
-        image_bytes: 原始图片 bytes(PNG/JPEG/WebP 等 Pillow 支持的格式)。
+        images: 原始图片 bytes(PNG/JPEG/WebP 等 Pillow 支持的格式),或 bytes 列表。
 
     Returns:
         (password, pdf_bytes):password 为随机 base32 字符串(去填充 =,26 字符)。
@@ -27,31 +30,39 @@ def image_to_encrypted_pdf(image_bytes: bytes) -> tuple[str, bytes]:
 
     import pypdf
 
-    # 图片 → PDF(Pillow;带 alpha 的 PNG 转 RGB 铺白底)
-    try:
-        img = PILImage.open(io.BytesIO(image_bytes))
-    except Exception as e:  # PIL.UnidentifiedImageError 等
-        raise ValueError(f"无法解析图片: {e}") from e
+    if isinstance(images, (bytes, bytearray)):
+        images = [images]
+    if not images:
+        raise ValueError("没有可转换的图片")
 
-    if img.mode in ("RGBA", "LA", "P"):
-        bg = PILImage.new("RGB", img.size, (255, 255, 255))
-        if img.mode == "P":
-            img = img.convert("RGBA")
-        alpha = img.split()[-1] if img.mode == "RGBA" else None
-        bg.paste(img, mask=alpha)
-        img = bg
-    else:
-        img = img.convert("RGB")
-    pdf_buf = io.BytesIO()
-    img.save(pdf_buf, "PDF", resolution=150)
+    page_readers: list = []
+    for image_bytes in images:
+        # 图片 → PDF(Pillow;带 alpha 的 PNG 转 RGB 铺白底)
+        try:
+            img = PILImage.open(io.BytesIO(image_bytes))
+        except Exception as e:  # PIL.UnidentifiedImageError 等
+            raise ValueError(f"无法解析图片: {e}") from e
+
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = PILImage.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            alpha = img.split()[-1] if img.mode == "RGBA" else None
+            bg.paste(img, mask=alpha)
+            img = bg
+        else:
+            img = img.convert("RGB")
+        page_buf = io.BytesIO()
+        img.save(page_buf, "PDF", resolution=150)
+        page_readers.append(pypdf.PdfReader(io.BytesIO(page_buf.getvalue())))
 
     # 随机 base32 密码(去填充 =,26 字符)
     password = base64.b32encode(secrets.token_bytes(16)).decode("ascii").rstrip("=")
 
-    # 加密
-    reader = pypdf.PdfReader(io.BytesIO(pdf_buf.getvalue()))
+    # 合并所有页 + 加密
     writer = pypdf.PdfWriter()
-    writer.append_pages_from_reader(reader)
+    for reader in page_readers:
+        writer.append_pages_from_reader(reader)
     writer.encrypt(user_password=password, owner_password=None)
     out = io.BytesIO()
     writer.write(out)

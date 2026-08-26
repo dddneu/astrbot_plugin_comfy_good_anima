@@ -82,17 +82,17 @@ class Draftsman:
                 让模型在一次对话内保持同一角色外观。
         """
         effective_nsfw = nsfw if nsfw is not None else self.nsfw
-        # Stage 1+2+3: 前置翻译节点（NER → 精确检索 → 拼音容错）
+        # Stage 1+2+3: 前置翻译节点（NER → 精确检索 → 拼音容错 → nltags 降级）
         # 向 Draftsman 输出「绝对确定、不可篡改的纯净英文 Tag 列表」
         from anima_agent.tag_service.cn_tag_resolver import resolve_cn_tags
 
-        confirmed_en_tags, negative_elements = await resolve_cn_tags(
+        confirmed_en_tags, nltags, negative_elements = await resolve_cn_tags(
             user_prompt, self.llm_complete
         )
 
         user_msg = self._build_user_message(
             user_prompt, session_context, confirmed_artists, ref_tags, character_sheet,
-            "", confirmed_en_tags,
+            "", confirmed_en_tags, nltags,
         )
         last_err: Optional[Exception] = None
         for attempt in range(MAX_PARSE_RETRIES + 1):
@@ -134,6 +134,7 @@ class Draftsman:
         character_sheet: Optional[str] = None,
         cn_hint: str = "",
         confirmed_en_tags: Optional[list[str]] = None,
+        nltags: Optional[list[str]] = None,
     ) -> str:
         parts = []
         if ref_tags:
@@ -171,8 +172,8 @@ class Draftsman:
                 "若用户明确描述了一个新角色,以用户最新描述为准。"
             )
 
-        # 中文角色/作品名 → 英文 tag（Stage 1+2+3 前置翻译节点已锁定）
-        # 前置节点保证每个实体最多 1 个绝对确定的 tag，不含任何歧义
+        # Stage 1+2+3: 前置翻译节点已锁定角色/作品 tag，
+        # Draftsman 只负责补充动作/光影/服装等其他元素
         if confirmed_en_tags:
             parts.append(
                 "【前置系统已锁定】以下核心英文 Tag 必须完整包含在 hard_tags 中，"
@@ -180,7 +181,12 @@ class Draftsman:
                 + ", ".join(confirmed_en_tags)
                 + "\n你的职责仅是根据用户意图，补充动作、光影、服装、镜头等其他元素的 Tag。"
             )
-        # cn_hint 在新版 resolve_cn_tags 中已不再产生，保留仅用于兼容旧代码
+        if nltags:
+            parts.append(
+                "【自然语言补充】以下内容在 Danbooru 标签库中无对应 Tag，"
+                "请以自然语言描述形式写入 nltags_block，交由 CLIP/T5 文本编码器自行泛化理解：\n  "
+                + "、".join(nltags)
+            )
         if cn_hint and not confirmed_en_tags:
             parts.append(cn_hint)
 
@@ -257,8 +263,8 @@ class Draftsman:
         # 默认字段
         args_data.setdefault("width", brief.canvas[0])
         args_data.setdefault("height", brief.canvas[1])
-        args_data.setdefault("batch_size", 1)
-        args_data.setdefault("steps", 30)
+        args_data.setdefault("batch_size", 5)
+        args_data.setdefault("steps", 8)
         args_data.setdefault("rtx_vsr_quality", "ULTRA")
 
         args = AnimaArgs(**args_data)

@@ -76,6 +76,7 @@ class CharacterEntity:
     name: str
     context_series: Optional[str] = None
     aliases: list[str] = field(default_factory=list)
+    certainty: str = "medium"  # "high" | "medium" | "low"
 
 
 @dataclass
@@ -144,6 +145,7 @@ def _parse(raw: str) -> NERResult:
                 name=name,
                 context_series=str(cs).strip() if cs else None,
                 aliases=aliases,
+                certainty=str(item.get("certainty", "medium")),
             ))
 
         neg: list[str] = data.get("negative_elements") or []

@@ -161,9 +161,10 @@ class ComfyUIClient:
     # ---- 拉图 ----
 
     async def fetch_image(self, output: dict) -> bytes:
-        """从 output 数据提取图片并 GET /view 拉取 bytes。
+        """从 output 数据提取**第一张**图片并 GET /view 拉取 bytes。
 
         output 形如 {node_id: {"images": [{"filename", "subfolder", "type"}]}}
+        (batch_size>1 时 images 有多个)。
         """
         await self._ensure_started()
         assert self._session is not None
@@ -178,6 +179,29 @@ class ComfyUIClient:
         async with self._session.get(f"{self.base_http}/view", params=params) as resp:
             resp.raise_for_status()
             return await resp.read()
+
+    async def fetch_images(self, output: dict) -> list[bytes]:
+        """从 output 提取**全部**图片(batch_size>1 一次出多张)并逐个拉取 bytes。
+
+        Raises:
+            ComfyUIError: output 里没有任何图片引用。
+        """
+        await self._ensure_started()
+        assert self._session is not None
+        refs = _extract_image_refs(output)
+        if not refs:
+            raise ComfyUIError(f"no image in output: {output}")
+        images: list[bytes] = []
+        for ref in refs:
+            params = {
+                "filename": ref["filename"],
+                "subfolder": ref.get("subfolder", ""),
+                "type": ref.get("type", "output"),
+            }
+            async with self._session.get(f"{self.base_http}/view", params=params) as resp:
+                resp.raise_for_status()
+                images.append(await resp.read())
+        return images
 
     # ---- 上传(参考图 / tagger 打标共用)----
 
@@ -288,24 +312,43 @@ class ComfyUIClient:
 
 
 def _extract_image_ref(output: dict) -> Optional[dict]:
-    """从 output 找第一个 image 引用。
+    """从 output 找第一个 image 引用。"""
+    refs = _extract_image_refs(output)
+    return refs[0] if refs else None
+
+
+def _extract_image_refs(output: dict) -> list[dict]:
+    """从 output 提取**全部** image 引用(batch_size>1 一次出多张)。
 
     兼容两种格式:
     - executed 事件 / 新版 /history.outputs:扁平 {"images": [...]}(或 gifs)
     - 旧版 /history.outputs:{node_id: {"images": [...]}}
+    按 (filename, subfolder, type) 去重保序。
     """
     if not isinstance(output, dict):
-        return None
-    images = output.get("images") or output.get("gifs")
-    if isinstance(images, list) and images:
-        return images[0]
+        return []
+    refs: list[dict] = []
+
+    def _collect(images) -> None:
+        if isinstance(images, list):
+            for item in images:
+                if isinstance(item, dict):
+                    refs.append(item)
+
+    _collect(output.get("images") or output.get("gifs"))
     for value in output.values():
         if not isinstance(value, dict):
             continue
-        images = value.get("images") or value.get("gifs")
-        if images:
-            return images[0]
-    return None
+        _collect(value.get("images") or value.get("gifs"))
+    seen: set[tuple] = set()
+    out: list[dict] = []
+    for ref in refs:
+        key = (ref.get("filename"), ref.get("subfolder"), ref.get("type"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(ref)
+    return out
 
 
 def _format_error(data: dict) -> str:

@@ -161,14 +161,14 @@ class SimpleAgent:
         # Stage 1+2+3: NER 抽取 → 精确检索 → 拼音容错（前置翻译节点）
         from anima_agent.tag_service.cn_tag_resolver import resolve_cn_tags
 
-        confirmed_en_tags, negative_elements = await resolve_cn_tags(
+        confirmed_en_tags, nltags, negative_elements = await resolve_cn_tags(
             user_prompt, self.llm_complete
         )
 
         # 构建用户消息
         user_msg = self._build_user_message(
             user_prompt, session_context, confirmed_artists, ref_tags,
-            character_sheet, "", confirmed_en_tags,  # cn_hint 已废弃
+            character_sheet, "", confirmed_en_tags, nltags,
         )
 
         # 一次性出稿，最多重试 2 次
@@ -212,6 +212,7 @@ class SimpleAgent:
         character_sheet: Optional[str] = None,
         cn_hint: str = "",
         confirmed_en_tags: Optional[list[str]] = None,
+        nltags: Optional[list[str]] = None,
     ) -> str:
         parts = []
         if ref_tags:
@@ -262,6 +263,13 @@ class SimpleAgent:
         if cn_hint and not confirmed_en_tags:
             parts.append(cn_hint)
 
+        if nltags:
+            parts.append(
+                "【自然语言补充】以下内容在 Danbooru 标签库中无对应 Tag，"
+                "请以自然语言描述形式写入 nltags_block，交由 CLIP/T5 文本编码器自行泛化理解：\n  "
+                + "、".join(nltags)
+            )
+
         parts.append(f"用户请求:\n{user_prompt}")
         if session_context:
             parts.append(f"\n上一轮上下文(用于修改意图,做局部替换):\n{session_context}")
@@ -311,8 +319,8 @@ class SimpleAgent:
             )
         args_data.setdefault("width", brief.canvas[0])
         args_data.setdefault("height", brief.canvas[1])
-        args_data.setdefault("batch_size", 1)
-        args_data.setdefault("steps", 30)
+        args_data.setdefault("batch_size", 5)
+        args_data.setdefault("steps", 8)
         args_data.setdefault("rtx_vsr_quality", "ULTRA")
 
         args = AnimaArgs(**args_data)

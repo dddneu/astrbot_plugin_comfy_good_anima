@@ -57,8 +57,11 @@ def test_confirmed_artists_flow_to_draftsman_user_message():
         )
         assert result.intent == "new"
         assert captured, "LLM 应被调用"
-        assert "ke-ta" in captured[0]
-        assert "@画师" in captured[0]
+        # 注意:draft() 现在先跑前置 NER 翻译(resolve_cn_tags),captured[0] 是
+        # NER 调用;出稿用户消息在最后一次调用里(含确认画师指导)
+        draft_msg = captured[-1]
+        assert "ke-ta" in draft_msg
+        assert "@画师" in draft_msg
 
     import asyncio
     asyncio.run(run())

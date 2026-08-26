@@ -10,7 +10,7 @@
   "44": {
     "class_type": "AnimaBoosterLoader",
     "inputs": {
-      "model_name": "anima-base-v1.0.safetensors",
+      "model_name": "anima-turbo-v1.1.safetensors",
       "sage_attention": "auto",
       "torch_compile": true
     }
@@ -46,7 +46,7 @@
     "inputs": {
       "width": 1024,
       "height": 1536,
-      "batch_size": 1
+      "batch_size": 5
     }
   },
   "19": {
@@ -69,10 +69,10 @@
         0
       ],
       "seed": 0,
-      "steps": 30,
-      "cfg": 4.5,
-      "sampler_name": "dpmpp_2m_sde_gpu",
-      "scheduler": "beta57",
+      "steps": 8,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
       "denoise": 1.0,
       "fovea_strength": 3.0,
       "sharpness": 0.5,
@@ -118,7 +118,7 @@
     "class_type": "AnimaTeaCache",
     "inputs": {
       "model": [
-        "63",
+        "65",
         0
       ],
       "threshold": 0.15,
@@ -151,6 +151,28 @@
       ],
       "lora_name": "anima-base-1-masterpiece-v51.safetensors",
       "strength_model": 1.0
+    }
+  },
+  "64": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "63",
+        0
+      ],
+      "lora_name": "Smooth_Booster_v5.safetensors",
+      "strength_model": 0.25
+    }
+  },
+  "65": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "64",
+        0
+      ],
+      "lora_name": "illustriousXLv01_stabilizer_v1.198.safetensors",
+      "strength_model": 0.25
     }
   }
 }

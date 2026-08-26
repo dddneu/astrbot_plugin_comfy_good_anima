@@ -141,7 +141,8 @@ class GenerationResult:
     args: AnimaArgs                  # 最终生效 args(含 seed)
     brief: VisualBrief
     three_layer: ThreeLayerPrompt
-    image_bytes: Optional[bytes] = None    # run 模式才有;submit 模式为 None
+    image_bytes_list: Optional[list[bytes]] = None  # run 模式才有;submit 模式为 None
+    # 兼容旧 API:单张取首张;批量取全部走 image_bytes_list
     review: Optional[ReviewResult] = None
     submitted_positive: str = ""     # 最终提交 payload 里正向 CLIP 节点的 text(地面真值)
     submitted_payload: Optional[dict] = None  # 最终提交给 ComfyUI 的 payload(换 seed 重绘用)
@@ -220,6 +221,7 @@ class AgentPipeline:
         random_artist_mode: str = "pool",
         random_artist_top_n: int = 100,
         random_artist_fixed: str = "",
+        user_batch_size: Optional[int] = None,
     ) -> GenerationResult:
         """完整生图流程。
 
@@ -399,6 +401,11 @@ class AgentPipeline:
         # filename_prefix 日期模板在 Python 侧展开(部分 ComfyUI 不展开 %date:...%
         # 模板,字面量含冒号的目录名会 WinError 267)。
         draft.args.filename_prefix = _expand_filename_prefix(draft.args.filename_prefix or "")
+        # 用户指定 batch_size(/draw-batch N):覆盖 LLM 出稿默认值。
+        # 上限由调用方校验(目前 main.py 限 1..8),这里再兜底夹一次,
+        # 防止负数/超大值打穿 ComfyUI latent 节点。
+        if user_batch_size is not None:
+            draft.args.batch_size = max(1, min(int(user_batch_size), 16))
         t5 = time.monotonic()
         payload, effective_args = await self._build_payload_with_ref(
             effective_workflow_id, draft.args.to_args_dict(),
@@ -412,14 +419,15 @@ class AgentPipeline:
             await self._tracker.set_comfyui_id(task_id, prompt_id)
             await self._tracker.set_running(task_id)
 
-        image_bytes = None
+        image_bytes_list = None
         if wait:
             t6 = time.monotonic()
             try:
                 output = await self.client.wait_for_output(
                     prompt_id, timeout=wait_timeout or DEFAULT_TIMEOUT
                 )
-                image_bytes = await self.client.fetch_image(output)
+                # batch_size>1 时取全部图片(以前 fetch_image 只取第 1 张,5 张只剩 1 张)
+                image_bytes_list = await self.client.fetch_images(output)
                 if task_id and self._tracker:
                     await self._tracker.set_completed(task_id)
                 t_stage["等待+取图"] = time.monotonic() - t6
@@ -437,7 +445,7 @@ class AgentPipeline:
             args=draft.args.model_copy(update={"seed": effective_args.get("seed")}),
             brief=draft.brief,
             three_layer=draft.three_layer,
-            image_bytes=image_bytes,
+            image_bytes_list=image_bytes_list,
             review=last_review,
             submitted_positive=submitted_positive,
             submitted_payload=submitted_payload,
@@ -473,13 +481,13 @@ class AgentPipeline:
             _swap_payload_artist(new_payload, old_artist, replace_artist)
         _set_payload_seed(new_payload, seed)
         prompt_id, submitted_payload = await _submit_with_fix(self.client, new_payload)
-        image_bytes = None
+        image_bytes_list = None
         if wait:
             output = await self.client.wait_for_output(
                 prompt_id, timeout=wait_timeout or DEFAULT_TIMEOUT
             )
-            image_bytes = await self.client.fetch_image(output)
-        return prompt_id, seed, image_bytes, submitted_payload
+            image_bytes_list = await self.client.fetch_images(output)
+        return prompt_id, seed, image_bytes_list, submitted_payload
 
     def _enforce_quality_floor(self, draft: DraftResult, workflow_id: str = "") -> None:
         """SKILL §7 画质地板。

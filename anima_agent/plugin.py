@@ -247,6 +247,7 @@ class AnimaAgentPlugin:
         intent: str = "new",
         ref_image: Optional[bytes] = None,
         pre_registered_task_id: Optional[str] = None,
+        user_batch_size: Optional[int] = None,
     ) -> dict:
         """处理生图/修改指令。
 
@@ -423,6 +424,7 @@ class AnimaAgentPlugin:
                 random_artist_mode=self.random_artist_mode,
                 random_artist_top_n=self.random_artist_top_n,
                 random_artist_fixed=self.random_artist_fixed,
+                user_batch_size=user_batch_size,
             )
         except Exception as e:
             logger.exception("generate failed")
@@ -457,22 +459,22 @@ class AnimaAgentPlugin:
 
         label = "修改重绘" if decision.is_modification else "新图"
         total = time.monotonic() - t0
-        print(f"[handle_draw] 完成 | status={'done' if result.image_bytes else 'queued'} | 总耗时={total:.1f}s | seed={result.args.seed} | subject={str(result.brief.subject or '')[:40]}")
+        print(f"[handle_draw] 完成 | status={'done' if result.image_bytes_list else 'queued'} | 总耗时={total:.1f}s | seed={result.args.seed} | subject={str(result.brief.subject or '')[:40]}")
         note = ("\n⚠️ " + "\n".join(route_notes)) if route_notes else ""
         prompt_suffix = self._prompt_reply_suffix(result)
-        if self.wait_for_image and result.image_bytes:
+        if self.wait_for_image and result.image_bytes_list:
             return {
                 "status": "done",
                 "task_id": task_id,
                 "prompt_id": result.prompt_id,
-                "image_bytes": result.image_bytes,
+                "image_bytes_list": result.image_bytes_list,
                 "message": f"已生成[{label}] (id={task_id}, prompt_id={result.prompt_id[:8]}, seed={result.args.seed}){note}{prompt_suffix}",
             }
         return {
             "status": "queued",
             "task_id": task_id,
             "prompt_id": result.prompt_id,
-            "image_bytes": None,
+            "image_bytes_list": None,
             "message": f"已提交队列[{label}] (id={task_id}, prompt_id={result.prompt_id[:8]}){note}",
         }
 
@@ -537,10 +539,10 @@ class AnimaAgentPlugin:
                 logger.warning("redraw 随机换画师抽取失败: %s", str(e)[:200])
                 next_artist = None
 
-        image_bytes: Optional[bytes] = None
+        images: Optional[list[bytes]] = None
         try:
             for _ in range(times):
-                prompt_id, seed, img, submitted = await self.pipeline.redraw(
+                prompt_id, seed, imgs, submitted = await self.pipeline.redraw(
                     last_payload,
                     wait=self.wait_for_image,
                     wait_timeout=self.generation_timeout,
@@ -550,12 +552,12 @@ class AnimaAgentPlugin:
                 last_payload = submitted
                 last_prompt_id = prompt_id
                 last_seed = seed
-                if img is not None:
-                    image_bytes = img
+                if imgs is not None:
+                    images = imgs
                 if task_id:
                     await self.tracker.set_comfyui_id(task_id, prompt_id)
                     await self.tracker.set_running(task_id)
-                    if img is not None:
+                    if imgs is not None:
                         await self.tracker.set_completed(task_id)
                 # 仅首次 redraw 换画师,后续 redraw 沿用新画师(只换 seed)
                 next_artist = None
@@ -597,24 +599,24 @@ class AnimaAgentPlugin:
             args=ctx.last_args.model_copy(update={"seed": last_seed}),
             brief=ctx.last_brief,
             three_layer=ctx.last_three_layer,
-            image_bytes=image_bytes,
+            image_bytes_list=images,
             submitted_positive=_submitted_positive_text(last_payload, None),
         )
         label = f"重绘 x{times}" if times > 1 else "重绘"
         prompt_suffix = self._prompt_reply_suffix(result)
-        if self.wait_for_image and image_bytes:
+        if self.wait_for_image and images:
             return {
                 "status": "done",
                 "task_id": task_id,
                 "prompt_id": last_prompt_id,
-                "image_bytes": image_bytes,
+                "image_bytes_list": images,
                 "message": f"已生成[{label}] (id={task_id}, prompt_id={last_prompt_id[:8]}, seed={last_seed}){prompt_suffix}",
             }
         return {
             "status": "queued",
             "task_id": task_id,
             "prompt_id": last_prompt_id,
-            "image_bytes": None,
+            "image_bytes_list": None,
             "message": f"已提交队列[{label}] (id={task_id}, prompt_id={last_prompt_id[:8]}, seed={last_seed})",
         }
 
@@ -632,9 +634,10 @@ class AnimaAgentPlugin:
         p11 = str(p11).strip()
         if not p11:
             return ""
-        if len(p11) > MAX_REPLY_PROMPT_LEN:
-            p11 = p11[:MAX_REPLY_PROMPT_LEN] + "…(截断)"
-        return f"\nPrompt: {p11}"
+        # if len(p11) > MAX_REPLY_PROMPT_LEN:
+        #     p11 = p11[:MAX_REPLY_PROMPT_LEN] + "…(截断)"
+        # return f"\nPrompt: {p11}"
+        return p11
 
     async def list_tasks(self, user_id: str, include_completed: bool = False) -> list[dict]:
         """查询用户的所有生图任务。

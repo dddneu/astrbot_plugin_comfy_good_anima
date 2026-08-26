@@ -17,8 +17,9 @@ async def mock_llm(sys_p, user_p):
 
 
 async def main():
-    confirmed, negative = await resolve_cn_tags("画一个可萝尔和爱丽丝", mock_llm)
+    confirmed, nltags, negative = await resolve_cn_tags("画一个可萝尔和爱丽丝", mock_llm)
     print(f"confirmed: {confirmed}")
+    print(f"nltags: {nltags}")
     print(f"negative: {negative}")
     assert confirmed, "应该有确认的 tag"
     print("PASS: 端到端流程 OK")

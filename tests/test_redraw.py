@@ -53,6 +53,9 @@ class _FakeClientE2E:
     async def fetch_image(self, output):
         return b"\x89PNG\r\n\x1a\n"
 
+    async def fetch_images(self, output):
+        return [b"\x89PNG\r\n\x1a\n", b"\x89PNG\r\n\x1a\n"]
+
 
 class _StubTagger:
     def __init__(self, tags: str = "silver hair", filename: str = "ref_stub.png"):
@@ -149,12 +152,26 @@ async def test_redraw_wait_mode_returns_image_times_n():
     res = await p.handle_redraw("sess", "u1", times=2)
     assert res["status"] == "done", res
     assert res["image_bytes"] == b"\x89PNG\r\n\x1a\n"
+    assert res["images"] == [b"\x89PNG\r\n\x1a\n", b"\x89PNG\r\n\x1a\n"], "batch>1 一次出多张"
     assert res["message"].startswith("已生成[重绘 x2]")
     assert len(client.submitted) == 1 + 2, "draw 1 次 + redraw 2 次"
     ctx = p.sessions.get("sess")
     assert ctx.last_payload["19"]["inputs"]["seed"] == client.submitted[-1]["19"]["inputs"]["seed"]
     # 后续「修改」继承重绘后的 seed
     assert ctx.last_args.seed == client.submitted[-1]["19"]["inputs"]["seed"]
+
+
+@pytest.mark.asyncio
+async def test_handle_draw_wait_mode_returns_all_images():
+    """wait 模式:handle_draw 返回全部出图(batch_size>1 一次多张)。"""
+    p, client = _make_plugin(wait_for_image=True)
+    res = await p.handle_draw(
+        "sess", "画一个她", "u1",
+        workflow_id="anima-txt2img-aesthetic-lora", ref_image=b"png",
+    )
+    assert res["status"] == "done", res
+    assert len(res["images"]) == 2, "batch>1 应返回全部出图"
+    assert res["image_bytes"] == res["images"][0], "image_bytes 兼容首图"
 
 
 def test_set_payload_seed_replaces_all_seed_fields():

@@ -26,10 +26,16 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# 拼音容错阈值
-_PY_SCORE_THRESHOLD = 0.80
+# 拼音容错阈值（极高：只有真正的音译错字才能通过）
+_PY_SCORE_THRESHOLD = 0.88
 _PY_TEXT_WEIGHT = 0.4
 _PY_PY_WEIGHT = 0.6
+
+# 长度熔断阈值（字数差 > 1 直接丢弃）
+_PY_LEN_TOLERANCE = 1
+
+# NER 置信度
+_CERTAINTY_LOW = "low"
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -42,13 +48,17 @@ class ResolvedTag:
     en_tag: str            # 最终英文 canonical tag
     rank: int              # 0=精确, 1=前缀, 2=拼音兜底
     via_alias: bool = False  # 是否经由 alias 精确命中
+    fallback_nl: bool = False  # True=查无此 Tag，需降级到 nltags
 
 
 @dataclass
 class RetrievalResult:
-    """完整检索结果：每个实体只返回 0~1 个确定 tag。"""
+    """完整检索结果：每个实体只返回 0~1 个确定 tag。
+
+    - resolved: 已确认的英文 tag（rank>=0）或降级到 nltags 的原文（rank=-1, fallback_nl=True）
+    - negative_elements: 用户排除项（透传）
+    """
     resolved: list[ResolvedTag] = field(default_factory=list)
-    unresolved: list[str] = field(default_factory=list)  # 完全查不到的原文
     negative_elements: list[str] = field(default_factory=list)  # 用户排除项（透传）
 
 
@@ -161,7 +171,16 @@ class RetrievalEngine:
     def _rank1_prefix(
         self, name: str, context_series: Optional[str]
     ) -> Optional[ResolvedTag]:
-        """仅当 Rank 0 失败时执行 LIKE 'cn%' 前缀查询。"""
+        """仅当 Rank 0 失败且 name >= 3 个汉字时执行前缀 LIKE 'cn%' 查询。
+
+        原因：单字/双字前缀太宽泛（如"黑%"匹配3000+条目），
+        极易产生误匹配。3 字及以上才能保证前缀的筛选性。
+        """
+        # 汉字字符数
+        cn_chars = sum(1 for ch in name if "\u4e00" <= ch <= "\u9fff")
+        if cn_chars < 3:
+            return None
+
         conn = self._connect()
         try:
             rows = conn.execute(
@@ -204,11 +223,32 @@ class RetrievalEngine:
             conn.close()
 
     # -------------------------------------------------------------------------
-    # Stage 3: 拼音容错兜底
+    # Stage 3: 拼音容错兜底（宁缺毋滥，三把锁）
     # -------------------------------------------------------------------------
 
-    def _rank2_pinyin_fallback(self, name: str) -> Optional[ResolvedTag]:
-        """拼音容错兜底。当 Stage 2 完全查不到时触发。"""
+    def _rank2_pinyin_fallback(
+        self, name: str, certainty: str = "medium"
+    ) -> Optional[ResolvedTag]:
+        """拼音容错兜底。当 Stage 2 完全查不到时触发。
+
+        三把锁（宁缺毋滥）：
+        1. 锁1: certainty=low → 直接熔断，不做兜底
+        2. 锁2: 字数差 abs(len(user)-len(db)) > 1 → 丢弃候选
+        3. 锁3: 综合相似度 score < 0.88 → 丢弃候选
+        全部失败 → 返回 None（安全降级到 nltags）
+        """
+        # --- 锁1: certainty=low 直接阻断 ---
+        if certainty == _CERTAINTY_LOW:
+            logger.debug(
+                "[Pinyin Fallback] '%s' certainty=low, 跳过拼音兜底", name
+            )
+            return None
+
+        # 汉字字符数 < 2 时不能做拼音兜底（噪音太大）
+        cn_chars = sum(1 for ch in name if "\u4e00" <= ch <= "\u9fff")
+        if cn_chars < 2:
+            return None
+
         # 延迟导入 pypinyin
         try:
             from pypinyin import Style, pinyin as _pinyin
@@ -226,31 +266,46 @@ class RetrievalEngine:
 
         conn = self._connect()
         try:
-            # 宽泛召回：pinyin_initial 前缀匹配（不查整个数据库，只查有拼音的）
+            # 召回策略：
+            #   (1) pinyin_initial = user_initial 完全相同（4字以上才有意义）
+            #   (2) pinyin_initial 前缀匹配 user_initial 前 3 个字符（防多字漏检）
+            # 严禁使用单字符前缀（噪音极大）
+            recall_patterns: list[str] = []
+            if len(user_initial) >= 3:
+                recall_patterns.append(user_initial)
+                recall_patterns.append(user_initial[:3])
+            else:
+                recall_patterns.append(user_initial)
+
+            placeholders = ",".join("?" * len(recall_patterns))
             rows = conn.execute(
-                """
+                f"""
                 SELECT name, cn_name, pinyin_full, pinyin_initial, post_count
                 FROM tags
-                WHERE pinyin_initial IS NOT NULL
-                  AND pinyin_initial != ''
-                  AND (pinyin_initial LIKE ? OR pinyin_initial LIKE ?)
+                WHERE pinyin_initial IN ({placeholders})
                 ORDER BY post_count DESC
-                LIMIT 30
+                LIMIT 50
                 """,
-                [f"{user_initial}%", f"{user_initial[0]}%"],
+                recall_patterns,
             ).fetchall()
 
             if not rows:
                 return None
 
-            # Python difflib 精准排序
             scored: list[tuple[float, sqlite3.Row]] = []
             for row in rows:
                 db_py = str(row["pinyin_initial"] or "")
                 db_cn = str(row["cn_name"] or "")
+
+                # --- 锁2: 字数差异熔断 ---
+                if abs(len(name) - len(db_cn)) > _PY_LEN_TOLERANCE:
+                    continue
+
                 text_ratio = difflib.SequenceMatcher(None, name, db_cn).ratio()
                 py_ratio = difflib.SequenceMatcher(None, user_initial, db_py).ratio()
                 score = text_ratio * _PY_TEXT_WEIGHT + py_ratio * _PY_PY_WEIGHT
+
+                # --- 锁3: 极高阈值（所有过线候选都收集，最后取最高分）---
                 if score > _PY_SCORE_THRESHOLD:
                     scored.append((score, row))
 
@@ -259,6 +314,7 @@ class RetrievalEngine:
 
             scored.sort(key=lambda x: x[0], reverse=True)
             best_score, best_row = scored[0]
+
             logger.info(
                 "[Pinyin Fallback] '%s' → '%s' (score=%.3f, pinyin=%s)",
                 name, best_row["name"], best_score, best_row["pinyin_initial"],
@@ -279,7 +335,7 @@ class RetrievalEngine:
         """对 Stage 1 的 NER 结果执行 Stage 2+3 检索。
 
         每个实体只返回 0~1 个绝对确定的英文 tag，不输出歧义候选。
-        全部查不到才标记为 unresolved。
+        三把锁全部失败后降级到 nltags（fallback_nl=True）。
         """
         from anima_agent.tag_service._ner import NERResult
 
@@ -294,6 +350,7 @@ class RetrievalEngine:
             name = entity.name
             aliases = entity.aliases or []
             context_series = getattr(entity, "context_series", None)
+            certainty = getattr(entity, "certainty", "medium")
 
             # Stage 2 Rank 0
             tag = self._rank0_exact(name, aliases, context_series)
@@ -307,15 +364,23 @@ class RetrievalEngine:
                 result.resolved.append(tag)
                 continue
 
-            # Stage 3 拼音兜底
-            tag = self._rank2_pinyin_fallback(name)
+            # Stage 3 拼音兜底（三把锁保护）
+            tag = self._rank2_pinyin_fallback(name, certainty)
             if tag:
                 result.resolved.append(tag)
                 continue
 
-            # 完全查不到
-            logger.debug("[Retrieval] 完全查不到: %s", name)
-            result.unresolved.append(name)
+            # 全部失败 → 降级到 nltags（绝不强塞）
+            logger.debug(
+                "[Retrieval] 查无此 Tag，降级到 nltags: '%s' (certainty=%s)",
+                name, certainty,
+            )
+            result.resolved.append(ResolvedTag(
+                original_name=name,
+                en_tag=name,  # 保留原文
+                rank=-1,
+                fallback_nl=True,
+            ))
 
         return result
 

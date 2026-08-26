@@ -199,20 +199,20 @@ ReferenceTaggingOptions / ReferenceTrainOptions 两个节点控制这次"炼丹"
 - `ref_train_steps`（0=默认）：用户要求强烈画风转换或原图细节极多 → 150~200。
 
 ## 精细调参指南（当出图质量不足时使用）
+⚠️ 当前工作流是 **turbo（anima-turbo-v1.1, steps=8, cfg=1）**:**不要拉高 steps/cfg**
+（过饱和发糊）。下面 fls_cfg 拉高的条目仅适用于非 turbo 场景。
 遇到以下情况可用 `args` 精细干预：
-- **细节不足/纹理发糊**：`fls_cfg` 拉高至 6.0–7.5，`fls_sharpness` 提至 0.7–0.9
+- **细节不足/纹理发糊**：`fls_sharpness` 提至 0.7–0.9（turbo 保持 cfg≈1）
 - **发丝/配饰边缘模糊**：`fls_sharpness` 提至 0.7–0.9
 - **面部特征过强/衣服走样**：`ip_adapter_strength` 降至 0.6–0.75
 - **IP-Adapter 影响时间过长导致服装/场景被污染**：`ip_adapter_end_at` 降至 0.3–0.4，让 IP-Adapter 尽早退场(默认已 0.45)
 - **参考约束弱(不够像)**：`instantref_model_strength` 提至 1.3–1.5，或 `instantref_start_at` 降到 0.2–0.35 让 InstantRef 更早接管
-- **细节描写词过多但模型不服从中**：`fls_cfg` 拉高（6.0–7.5）同时 `fls_step_decay` 设为 0.1–0.3（步数递减式衰减）
 - **需要生成复杂服装纹理/装饰但模型倾向简化**：在 `negative_repel` 中追加 `simplified, plain clothes, missing details, blurry`
 - **底层构图正确但高频细节（褶皱/反光/发丝）不够**：`ip_adapter_layer_filter` 和 `fls_layer_filter` 设为 `OUT`（只注入 U-Net 高频层）
 
 `args` 字段写法示例：
 ```json
 "args": {
-  "fls_cfg": 6.5,
   "fls_sharpness": 0.75,
   "ip_adapter_strength": 0.7,
   "ip_adapter_end_at": 0.4,
@@ -439,7 +439,7 @@ EXAMPLES = """# 5. 完整示例
   },
   "args": {
     "prompt_12": "worst quality, low quality, score_1, score_2, score_3, watermark, logo, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, blurry",
-    "width": 1152, "height": 1536, "steps": 30,
+    "width": 1152, "height": 1536, "steps": 8,
     "filename_prefix": "anima/2026-01-01/anima_base_v1_0-none-kanade_tachibana"
   },
   "tag_queries": [
@@ -469,7 +469,7 @@ EXAMPLES = """# 5. 完整示例
   },
   "args": {
     "prompt_12": "worst quality, low quality, score_1, score_2, score_3, watermark, logo, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, blurry",
-    "width": 1536, "height": 1024, "steps": 30,
+    "width": 1536, "height": 1024, "steps": 8,
     "filename_prefix": "anima/ref_mode_v1_0"
   },
   "tag_queries": []
@@ -497,7 +497,7 @@ EXAMPLES = """# 5. 完整示例
   "args": {
     "prompt_12": "worst quality, low quality, score_1, score_2, score_3, watermark, logo, bad anatomy, bad hands, extra limbs, blurry",
     "artist_chain": "wlop, (sakimichan:1.2), (krenz:0.7)",
-    "width": 1024, "height": 1536, "steps": 40,
+    "width": 1024, "height": 1536, "steps": 8,
     "filename_prefix": "anima/artist_mixer_v1_0"
   },
   "tag_queries": [
@@ -533,7 +533,7 @@ DRAFT_JSON_SKELETON = """# 输出格式
   "args": {
     "prompt_12": "负向prompt",
     "artist_chain": "仅画师融合模式时填：2-4个画师，不带@，支持权重如 wlop, (sakimichan:1.2)",
-    "width": 1152, "height": 1536, "steps": 30,
+    "width": 1152, "height": 1536, "steps": 8,
     "filename_prefix": "anima/前缀",
     "ref_tag_exclude": "仅参考图模式(可选)：要焊进角色的身份 tag(1girl/solo/looking at viewer/发色/瞳色)；绝不能放衣服/动作/背景(打标悖论)",
     "ref_tag_prepend": "仅参考图模式(可选)：画风词(技法 tag/画师名)",
@@ -562,11 +562,15 @@ TUNE_PARAMS_GUIDE = """## 精细调参指南（`args` 字段）
 以下参数用于解决"细节不够/纹理发糊/边缘不清晰/面部过强"等质量问题。
 不要在 prompt 里反复强调（LLM 过度堆词反而降低质量），用调参更精准。
 
+⚠️ **turbo 工作流（anima-turbo-v1.1）**：steps=8、cfg≈1（euler/simple），
+**不要再拉高 steps/cfg**（30-40 步或 cfg>2 会让 turbo 过饱和发糊）。batch_size=5
+一次出 5 张，靠 seed 多样性挑图。
+
 ### FLSampler 调参（全部工作流）
 
 | 参数 | 默认值 | 何时用 | 推荐范围 |
 |------|--------|--------|----------|
-| `fls_cfg` | 4.5 | 细节服从度弱/文本词过多但不服从 | 6.0–7.5 |
+| `fls_cfg` | 1.0 | ⚠️ turbo 保持 1 附近;非 turbo 才考虑拉高 | 1.0（turbo） |
 | `fls_sharpness` | 0.5 | 发丝/配饰/衣服边缘模糊 | 0.7–0.9 |
 | `fls_fovea_strength` | 3.0 | 纹理不足/质感弱 | 4.0–5.5 |
 | `fls_layer_filter` | "" | 底层构图好但高频层不够 | `OUT` |

@@ -131,6 +131,110 @@ async def _safe_send(
     return False
 
 
+# 平台消息体上限(2 MB):图太大被 QQ/微信/Telegram 等平台拒收/转文件/质量下降
+# 压缩策略：先 Pillow 无损优化,仍超限则降级到 JPEG quality=95(视觉无损)
+_IMAGE_SEND_LIMIT = 2 * 1024 * 1024
+_IMAGE_JPEG_FALLBACK_QUALITY = 95
+
+
+def _compress_image_for_send(img: bytes) -> tuple[bytes, str]:
+    """无损压缩图片到 2MB 以内,优先 Pillow optimize,最后 JPEG fallback。
+
+    策略:
+    1. PNG/WebP/BMP/TIFF: Pillow optimize=True(无损),若仍 > 2MB → 转 JPEG quality=95
+    2. 已是 JPEG: Pillow optimize=True + 再编码(保留 quality,可能略有提升)
+    3. 任何步骤失败: 安全降级返回原 bytes + 探测到的格式
+
+    Args:
+        img: 原始图片字节流
+
+    Returns:
+        (compressed_bytes, format_ext) — ext 是 Pillow format 小写("png"/"jpeg"/...)
+        适用于 Image.fromBytes/fromFileSystem 的临时文件名后缀。
+    """
+    try:
+        from PIL import Image as PILImage
+        import io
+    except ImportError:
+        logger.warning("Pillow 未安装,跳过图片压缩(原 bytes 直接发送)")
+        return img, "png"
+
+    try:
+        src = PILImage.open(io.BytesIO(img))
+        # 保留原格式,避免无意义转码损失
+        orig_format = (src.format or "PNG").upper()
+        save_kwargs: dict = {"format": orig_format}
+        is_lossless_format = orig_format in ("PNG", "WEBP", "BMP", "TIFF", "GIF")
+
+        # 无损格式: 先 optimize=True (PNG 压缩字典过滤, 10~30% 体积下降)
+        if is_lossless_format:
+            save_kwargs["optimize"] = True
+        else:
+            # JPEG 等有损格式:保留原 quality,optimize=True 只是改编码器扫描方式
+            if "quality" not in src.info:
+                save_kwargs["quality"] = _IMAGE_JPEG_FALLBACK_QUALITY
+            else:
+                save_kwargs["quality"] = src.info["quality"]
+            save_kwargs["optimize"] = True
+            save_kwargs["progressive"] = True  # JPEG 渐进式, 体验更好
+
+        buf = io.BytesIO()
+        src.save(buf, **save_kwargs)
+        compressed = buf.getvalue()
+        ext = (orig_format or "PNG").lower()
+        if ext == "jpeg":
+            ext = "jpg"
+
+        # 已达标(<2MB)
+        if len(compressed) <= _IMAGE_SEND_LIMIT:
+            logger.debug(
+                "[ImageCompress] %s %d→%d bytes (%.1f%%), 无需降级",
+                orig_format, len(img), len(compressed),
+                len(compressed) / max(len(img), 1) * 100,
+            )
+            return compressed, ext
+
+        # 仍超限 → 强制转 JPEG quality=95(视觉无损)
+        if src.mode in ("RGBA", "LA", "P"):
+            rgb = src.convert("RGB")
+        else:
+            rgb = src
+        buf2 = io.BytesIO()
+        rgb.save(
+            buf2,
+            format="JPEG",
+            quality=_IMAGE_JPEG_FALLBACK_QUALITY,
+            optimize=True,
+            progressive=True,
+        )
+        jpeg_bytes = buf2.getvalue()
+        if len(jpeg_bytes) < len(compressed):
+            logger.info(
+                "[ImageCompress] %s %d bytes 超限,降级 JPEG q=%d → %d bytes (%.1f%%)",
+                orig_format, len(img), _IMAGE_JPEG_FALLBACK_QUALITY,
+                len(jpeg_bytes), len(jpeg_bytes) / len(img) * 100,
+            )
+            return jpeg_bytes, "jpg"
+
+        logger.warning(
+            "[ImageCompress] %s 降级 JPEG 后体积 %d 仍 > %d,保留原 PNG bytes",
+            orig_format, len(jpeg_bytes), _IMAGE_SEND_LIMIT,
+        )
+        return img, ext
+    except Exception as e:
+        logger.exception("[ImageCompress] 压缩失败,使用原 bytes")
+        # 探测格式供下游 fallback 文件名
+        try:
+            from PIL import Image as PILImage2
+            import io as io2
+            fmt = (PILImage2.open(io2.BytesIO(img)).format or "png").lower()
+            if fmt == "jpeg":
+                fmt = "jpg"
+        except Exception:
+            fmt = "png"
+        return img, fmt
+
+
 async def _save_image_fallback(
     event: AstrMessageEvent, img: bytes, suffix: str = "png"
 ) -> str | None:
@@ -199,7 +303,7 @@ def _sanitize_prompt(event: AstrMessageEvent) -> str:
     raw = (getattr(event, "message_str", "") or "").strip()
     first, _, rest = raw.partition(" ")
     cmd = first.lower().lstrip("/").strip("\"'")
-    if cmd in ("draw", "draw-new", "draw-modify"):
+    if cmd in ("draw", "draw-new", "draw-modify", "draw-batch"):
         raw = rest
     # 去控制字符(保留普通空白)
     return "".join(c for c in raw if c.isprintable() or c.isspace()).strip()
@@ -577,6 +681,109 @@ class AnimaStar(Star):
                     intent="new",
                 )
 
+    @filter.command("draw-batch")
+    async def draw_batch(self, event: AstrMessageEvent):
+        """指定张数生图:一次多出 N 张(1..8),靠 seed 多样性挑图。
+        用法: /draw-batch <张数> <描述>
+        例: /draw-batch 5 教室里的银发少女
+
+        与 /draw 的差别:只在生成时覆盖 args.batch_size,流程与排队逻辑一致。
+        张数上限 8 兼顾显存(8×1536×1024 latent)与 ComfyUI 队列等待时间;
+        0 或 >8 视为非法,直接提示并不发起生图。
+        """
+        _UMO.set(event.unified_msg_origin)
+        raw = (getattr(event, "message_str", "") or "").strip()
+        # 去掉首条命令名(/draw-batch),剩下来的非空 token
+        parts = [p for p in raw.split() if p.strip()]
+        # AstrBot 的 message_str 通常不带命令前缀,这里保险取首 token
+        if parts and parts[0].lstrip("/").lower() in {"draw-batch", "drawbatch"}:
+            parts = parts[1:]
+        if not parts or not parts[0].isdigit():
+            await _safe_send(
+                event,
+                self._quote(
+                    event,
+                    Plain("用法: /draw-batch <张数 1..8> <描述>\n例: /draw-batch 5 教室里的银发少女"),
+                ),
+            )
+            return
+        n = int(parts[0])
+        MAX_BATCH = 8
+        if n < 1 or n > MAX_BATCH:
+            await _safe_send(
+                event,
+                self._quote(
+                    event,
+                    Plain(f"张数需在 1..{MAX_BATCH} 之间,收到 {n}"),
+                ),
+            )
+            return
+        user_text = " ".join(parts[1:]).strip()
+        # 与 _sanitize_prompt 行为对齐:去控制字符
+        user_text = "".join(c for c in user_text if c.isprintable() or c.isspace()).strip()
+        if not user_text:
+            await _safe_send(
+                event,
+                self._quote(
+                    event,
+                    Plain(f"请输入要画的内容,例如: /draw-batch {n} 教室里的银发少女"),
+                ),
+            )
+            return
+        if len(user_text) > MAX_PROMPT_LEN:
+            await _safe_send(
+                event,
+                self._quote(
+                    event,
+                    Plain(
+                        f"描述过长({len(user_text)} 字符,上限 {MAX_PROMPT_LEN}),请精简后重试"
+                    ),
+                ),
+            )
+            return
+
+        session_id = f"{event.unified_msg_origin}:{event.get_sender_id()}"
+        user_id = str(event.get_sender_id())
+        task_id = await self.core.tracker.register(
+            user_id=user_id,
+            prompt=user_text,
+            workflow_id=self.workflow,
+        )
+
+        user_wants_new_seed = any(
+            w in user_text for w in ("换seed", "换 seed", "重新抽", "重抽", "reroll")
+        )
+
+        lock = self.core.session_lock(session_id)
+        if lock.locked():
+            await _safe_send(
+                event,
+                self._quote(
+                    event,
+                    Plain(
+                        f"你上一张还在处理中,本条已排队(任务ID: {task_id},张数={n})。"
+                        f"当前 session 排队 1 个,可用 /draw-list 查看所有任务"
+                    ),
+                ),
+            )
+        async with lock:
+            if self.core.gen_sem.locked():
+                await _safe_send(
+                    event,
+                    self._quote(event, Plain("当前生成任务较多,排队中...")),
+                )
+            async with self.core.gen_sem:
+                await self._run_draw(
+                    event,
+                    session_id,
+                    user_text,
+                    user_wants_new_seed,
+                    task_id,
+                    user_id,
+                    intent="new",
+                    user_batch_size=n,
+                )
+
     @filter.command("draw-modify")
     async def draw_modify(self, event: AstrMessageEvent):
         """修改上一张图:继承上一轮的 seed / 角色 / 参考图上下文。
@@ -662,6 +869,7 @@ class AnimaStar(Star):
         task_id: str,
         user_id: str,
         intent: str = "new",
+        user_batch_size: int | None = None,
     ) -> None:
         """锁内生图主流程。task_id 已在 lock 等待前注册(/draw-list 可看到排队)。
 
@@ -684,6 +892,7 @@ class AnimaStar(Star):
                 intent=intent,
                 ref_image=ref_image,
                 pre_registered_task_id=task_id,
+                user_batch_size=user_batch_size,
             )
         except Exception as e:
             logger.exception("draw failed")
@@ -692,8 +901,8 @@ class AnimaStar(Star):
 
         await _safe_send(event, self._quote(event, Plain(result["message"])))
 
-        if result.get("image_bytes"):
-            await self._send_image(event, result["image_bytes"])
+        if result.get("image_bytes_list"):
+            await self._send_image(event, result["image_bytes_list"])
         elif result["status"] == "queued":
             # submit 模式:起后台任务,生成完主动推送(持引用防 GC)
             task = asyncio.create_task(self._push_when_done(event, result["prompt_id"]))
@@ -751,8 +960,8 @@ class AnimaStar(Star):
                     return
 
         await _safe_send(event, self._quote(event, Plain(result["message"])))
-        if result.get("image_bytes"):
-            await self._send_image(event, result["image_bytes"])
+        if result.get("image_bytes_list"):
+            await self._send_image(event, result["image_bytes_list"])
         elif result["status"] == "queued":
             task = asyncio.create_task(self._push_when_done(event, result["prompt_id"]))
             self._bg_tasks.add(task)
@@ -863,13 +1072,16 @@ class AnimaStar(Star):
         后台任务的"发送失败"在调度器层(主链路)里会再被 _deliver_result 重试,
         这里只覆盖 _deliver_result 之外、wait_for_output / fetch_image 的失败,
         以及 context.send_message 的兜底发送。
+
+        batch_size>1 时 fetch_images 返回多张,_send_image 会按 PDF/直接发送分别处理。
         """
         try:
             output = await self.core.client.wait_for_output(prompt_id)
-            img = await self.core.client.fetch_image(output)
-            await self._deliver_result(
-                event, img, note=f"图生成好了 (prompt_id={prompt_id[:8]})"
-            )
+            imgs = await self.core.client.fetch_images(output)
+            note = f"图生成好了 (prompt_id={prompt_id[:8]})"
+            if len(imgs) > 1:
+                note += f" 共 {len(imgs)} 张"
+            await self._deliver_result(event, imgs, note=note)
         except Exception as e:
             logger.exception("push_when_done failed")
             # 与主链路风格一致:_safe_send 内部对瞬态网络错误重试
@@ -878,11 +1090,36 @@ class AnimaStar(Star):
                 op_label="后台推送错误提示",
             )
 
-    async def _send_image(self, event: AstrMessageEvent, img: bytes) -> None:
-        await self._deliver_result(event, img, note="")
+    async def _send_image(self, event: AstrMessageEvent, images: "bytes | list[bytes]") -> None:
+        """统一发图入口(支持单图 bytes 或多图 list)。
+
+        单图 → _deliver_result 走原路径;多图 → PDF 模式下合成多页 PDF,
+        直接发图模式下一张张压缩发送(顺序保持,失败时 fallback 到原图本地暂存)。
+        """
+        if isinstance(images, (bytes, bytearray)):
+            await self._deliver_result(event, images, note="")
+            return
+
+        # 多图(batch_size>1)
+        imgs = list(images)
+        if not imgs:
+            return
+
+        if self.pdf_send:
+            # PDF 模式:多张合成多页 PDF(已有 image_to_encrypted_pdf 支持)
+            await self._deliver_result(event, imgs, note=f"共 {len(imgs)} 张")
+            return
+
+        # 直接发图模式:逐张发(每张独立重试/独立 fallback)
+        for i, img in enumerate(imgs):
+            note = f"({i + 1}/{len(imgs)})" if len(imgs) > 1 else ""
+            await self._deliver_result(event, img, note=note)
 
     async def _deliver_result(
-        self, event: AstrMessageEvent, img: bytes, note: str = ""
+        self,
+        event: AstrMessageEvent,
+        image_or_list: "bytes | list[bytes]",
+        note: str = "",
     ) -> None:
         """统一出图出口:pdf_send 开启时转加密 PDF(先回密码,再按场景发送:
         私聊直接发文件,群聊合并转发),否则直接发图。
@@ -893,22 +1130,33 @@ class AnimaStar(Star):
         - 重试全部耗尽后,把图本地暂存到 data/anima_fallback/<session>/,再发一条
           文字告诉用户本地路径——避免大图/网络抖动导致用户"什么都没收到"。
         """
+        # Pillow 无损压缩到 2MB 以内(优先 optimize, 超限降级 JPEG quality=95)
+        # _save_image_fallback 用的是原始未压缩 bytes, 保证用户本地拿到最高画质
+        # 多图模式(已传 list)直接走 PDF, 单图模式走压缩后直接发
+        is_list = isinstance(image_or_list, list)
+        images_to_send = image_or_list if is_list else [image_or_list]
+
         if not self.pdf_send:
-            ok = await _safe_send(
-                event, self._quote(event, self._image(img)),
-                op_label="出图",
-            )
-            if not ok:
-                await self._fallback_after_send_fail(event, img, note, ext="png")
+            # 非 PDF 模式:逐张压缩发送(多图列表已在 _send_image 展开,此处只处理单图)
+            for img in images_to_send:
+                compressed_img, ext = _compress_image_for_send(img)
+                ok = await _safe_send(
+                    event, self._quote(event, self._image(compressed_img)),
+                    op_label="出图",
+                )
+                if not ok:
+                    await self._fallback_after_send_fail(event, img, note, ext="png")
             return
 
         # ---- PDF 模式 ----
+        # 单图/多图: image_to_encrypted_pdf 已支持 list(bytes)
         try:
             image_to_encrypted_pdf = _import_pdf_util()
-            password, pdf_bytes = image_to_encrypted_pdf(img)
+            password, pdf_bytes = image_to_encrypted_pdf(images_to_send)
         except Exception as e:
             logger.exception("图片转加密 PDF 失败,回退直接发图")
-            await self._send_image(event, img)
+            for img in images_to_send:
+                await self._send_image(event, img)
             return
 
         # 1. 先返回密码(独立消息,失败也不影响后续 PDF 发送)
@@ -941,7 +1189,7 @@ class AnimaStar(Star):
                 if not ok:
                     # PDF 已转好,重试耗尽也至少把原图存一份,告诉用户
                     await self._fallback_after_send_fail(
-                        event, img, note,
+                        event, images_to_send[0], note,
                         ext="pdf",
                         extra=f"PDF 密码: {password}",
                     )
@@ -964,13 +1212,14 @@ class AnimaStar(Star):
                 )
                 if not ok:
                     await self._fallback_after_send_fail(
-                        event, img, note,
+                        event, images_to_send[0], note,
                         ext="pdf",
                         extra=f"PDF 密码: {password}",
                     )
         except Exception as e:
             logger.exception("发送加密 PDF 失败,回退直接发图")
-            await self._send_image(event, img)
+            for img in images_to_send:
+                await self._send_image(event, img)
         finally:
             try:
                 os.remove(pdf_ready.name)

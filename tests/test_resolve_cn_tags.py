@@ -97,20 +97,22 @@ def test_pinyin_fallback():
 
 
 def test_unresolved():
-    """查不到的实体 → unresolved"""
+    """查不到的实体 → 降级到 nltags（rank=-1, fallback_nl=True）"""
     eng = RetrievalEngine()
     from anima_agent.tag_service._ner import NERResult, CharacterEntity
 
     ner = NERResult(
         characters=[
-            CharacterEntity(name="完全不存在的角色名XYZ", context_series=None, aliases=[]),
+            CharacterEntity(name="完全不存在的角色名XYZ", context_series=None, aliases=[], certainty="medium"),
         ],
         negative_elements=[],
         success=True,
     )
     result = eng.resolve(ner)
-    assert len(result.unresolved) == 1, f"expected 1 unresolved, got {result.unresolved}"
-    print(f"[PASS] 查不到的实体正确标记为 unresolved: {result.unresolved}")
+    assert len(result.resolved) == 1
+    tag = result.resolved[0]
+    assert tag.fallback_nl is True, f"预期降级到 nltags, got rank={tag.rank}"
+    print(f"[PASS] 查不到的实体降级到 nltags: '{tag.original_name}' (rank=-1)")
 
 
 def test_multiple_entities():
@@ -127,7 +129,7 @@ def test_multiple_entities():
         success=True,
     )
     result = eng.resolve(ner)
-    print(f"[INFO] 2个实体: resolved={len(result.resolved)}, unresolved={result.unresolved}")
+    print(f"[INFO] 2个实体: resolved={len(result.resolved)}, fallback_nl={[t.original_name for t in result.resolved if t.fallback_nl]}")
     print(f"[INFO] negative_elements 透传: {result.negative_elements}")
     assert result.negative_elements == ["Lovelive"]
     print("[PASS] negative_elements 透传正确")

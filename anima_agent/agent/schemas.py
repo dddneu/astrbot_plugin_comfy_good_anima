@@ -109,8 +109,8 @@ class AnimaArgs(BaseModel):
     prompt_12: str = Field(description="负向 prompt")
     width: int
     height: int
-    batch_size: int = 1
-    steps: int = Field(default=30, description="默认 30;高质量/复杂背景/多人/强光影用 40")
+    batch_size: int = 5
+    steps: int = Field(default=8, description="默认 8(turbo 模型低步数);不要随意拉高,30-40 步会让 turbo 过饱和")
     seed: Optional[int] = Field(default=None, description="None 时由 schema_injector 补随机")
     rtx_vsr_quality: str = "ULTRA"
     filename_prefix: str
@@ -120,7 +120,7 @@ class AnimaArgs(BaseModel):
     fls_sharpness: Optional[float] = None      # 主体发糊 → 小幅提高(工作流默认 0.5)
     fls_fovea_strength: Optional[float] = None  # 纹理不足 → 小幅提高(默认 3.0)
     fls_mask_inertia: Optional[float] = None    # 焦点跳动 → 提高(默认 0.85)
-    fls_cfg: Optional[float] = None             # 文本服从度弱/细节不足 → 拉高至 6.0-7.5(默认 4.5)
+    fls_cfg: Optional[float] = None             # turbo 保持 1.0;非 turbo 细节服从度弱才拉高
     fls_layer_filter: Optional[str] = None      # OUT=只在高频层注入,锁定底层大构图
     fls_step_decay: Optional[float] = None      # 步数衰减系数(0-1),前中期强引导后期自由生成
 

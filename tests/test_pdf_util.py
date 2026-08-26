@@ -71,3 +71,17 @@ class TestImageToEncryptedPdf:
         p1, _ = image_to_encrypted_pdf(_make_png())
         p2, _ = image_to_encrypted_pdf(_make_png())
         assert p1 != p2
+
+    def test_multi_images_merge_into_multi_page_pdf(self):
+        """batch_size>1 一次出多张:多图合并为多页加密 PDF(单张兼容旧调用)。"""
+        import pypdf
+
+        password, pdf_bytes = image_to_encrypted_pdf([_make_png(), _make_png(width=80, height=60)])
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        assert reader.is_encrypted
+        reader.decrypt(password)
+        assert len(reader.pages) == 2, "多图应合并为多页 PDF"
+
+    def test_empty_image_list_raises(self):
+        with pytest.raises(ValueError, match="没有可转换的图片"):
+            image_to_encrypted_pdf([])
