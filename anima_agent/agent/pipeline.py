@@ -54,8 +54,7 @@ INSTANT_REF_CLASS = "InstantReferenceLoRA"
 # instantref: 纯 InstantReferenceLoRA(0~1.0步,需1-3分钟训练)
 # instantref-ipadapter: IP-Adapter(0~0.5步) + InstantReferenceLoRA(0.5~1.0步)组合,推荐默认使用
 INSTANT_REF_BASE = "anima-txt2img-aesthetic-lora"
-INSTANT_REF_WORKFLOW = "anima-txt2img-aesthetic-lora-instantref"
-INSTANTREF_IPADAPTER_WORKFLOW = "anima-txt2img-aesthetic-lora-instantref-ipadapter"
+INSTANT_REF_WORKFLOW = "anima-txt2img-aesthetic-lora-edit"
 
 # args 字段名 → InstantReferenceLoRA 节点输入名(LLM 经 tune_params 设置)
 # 步数截断:让 InstantReferenceLoRA 只在前中期生效,把后期细节交给基础模型
@@ -337,7 +336,8 @@ class AgentPipeline:
             # 非参考图模式按原 SKILL §5 流程跑 confirmed → 回填
             t2 = time.monotonic()
             is_ref_workflow = bool(effective_workflow_id) and (
-                "-ref" in effective_workflow_id or "instantref" in effective_workflow_id
+                "-ref" in effective_workflow_id
+                or "instantref" in effective_workflow_id
             )
             if is_ref_workflow:
                 logger.info("参考图模式跳过全量 tag 校验,仅靠 _sanitize_ref_character_tags 防串脸")
@@ -656,7 +656,7 @@ class AgentPipeline:
            underscore 与空格互相归一("silver_hair" ↔ "silver hair"),
            让 tag 碎片与 VLM 自然语言能互相命中。
         """
-        if not workflow_id or not ("-ref" in workflow_id or "instantref" in workflow_id):
+        if not workflow_id or not ("-ref" in workflow_id or "instantref" in workflow_id or "edit" in workflow_id):
             return draft
 
         # 1. tagger 白名单:WD14 碎片 + Qwen-VL 自然语言描述(两路都算参考图自己的内容)
@@ -725,7 +725,7 @@ class AgentPipeline:
         安全的:画师只进 hard_tags 的 @画师,不参与外观/服装维度,确认后写 @画师
         防止 LLM 把画师名当风格词(WD14 的画师元 tag 语义精确,值得锚定)。
         """
-        if not workflow_id or not ("-ref" in workflow_id or "instantref" in workflow_id):
+        if not workflow_id or not ("-ref" in workflow_id or "instantref" in workflow_id or "edit" in workflow_id):
             return draft
         artist_queries = [
             q for q in (draft.tag_queries or [])
@@ -1135,13 +1135,13 @@ def _is_profile_combo(fspec) -> bool:
 
 
 def _is_ref_capable_workflow(workflow_id: str) -> bool:
-    """工作流自身已带参考机制(instantref/ipadapter/-ref),不再追加后缀。"""
-    return "-ref" in workflow_id or "instantref" in workflow_id
+    """工作流自身已带参考机制(instantref/ipadapter/-ref/edit),不再追加后缀。"""
+    return "-ref" in workflow_id or "instantref" in workflow_id or "edit" in workflow_id
 
 
 def _strip_ref_suffix(workflow_id: str) -> str:
     """去掉参考工作流后缀,回退基础工作流(无参考图时用)。"""
-    for suffix in ("-instantref", "-ipadapter", "-ref"):
+    for suffix in ("-instantref", "-ipadapter", "-ref", "-edit"):
         if suffix in workflow_id:
             return workflow_id.replace(suffix, "")
     return workflow_id
@@ -1150,18 +1150,18 @@ def _strip_ref_suffix(workflow_id: str) -> str:
 def _resolve_ref_workflow(workflow_id: str, has_ref: bool) -> str:
     """参考工作流解析。
 
-    - 有参考且 workflow 非参考工作流:默认生图工作流 → instantref-ipadapter(推荐组合:
-      IP-Adapter 0~0.5步注入全局语义, InstantReferenceLoRA 0.5~1.0步接管精细细节),
-      其他工作流优先用其手动 *-ref 版本(workflows/ 下有对应文件夹),不存在则
-      退回 instantref-ipadapter(当前最优参考图机制)。
+    - 有参考且 workflow 非参考工作流:默认生图工作流 → edit 工作流(带 InstantReferenceLoRA
+      的分屏编辑模式),其他工作流优先用其手动 *-ref 版本,不存在则退回 edit。
     - 无参考但 workflow 是参考工作流 → 去后缀回退基础版本(防 __REF_IMAGE__ 泄漏)。
     """
     if has_ref and not _is_ref_capable_workflow(workflow_id):
         if workflow_id == INSTANT_REF_BASE:
-            return INSTANTREF_IPADAPTER_WORKFLOW
+            return INSTANT_REF_WORKFLOW
         if (WORKFLOW_ROOT / f"{workflow_id}-ref" / "workflow.json").is_file():
             return workflow_id + "-ref"
-        return INSTANTREF_IPADAPTER_WORKFLOW
+        if (WORKFLOW_ROOT / f"{workflow_id}-edit" / "workflow.json").is_file():
+            return workflow_id + "-edit"
+        return INSTANT_REF_WORKFLOW
     if not has_ref and _is_ref_capable_workflow(workflow_id):
         return _strip_ref_suffix(workflow_id)
     return workflow_id

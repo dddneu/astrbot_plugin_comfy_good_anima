@@ -61,21 +61,6 @@
     "type": "bool",
     "default": true
   },
-  "workflow_intent_map": {
-    "description": "意图关键词 → 工作流 ID 的映射。检测到用户 prompt 含某关键词时自动切换对应工作流(优先级从高到低)。值填 workflows/ 目录下的工作流 id(可自行添加),留空则关闭自动切换,完全交给 LLM 意图路由和参考图自动判断",
-    "type": "dict",
-    "default": {
-      "融合": "anima-txt2img-aesthetic-lora-artist-mixer",
-      "混合": "anima-txt2img-aesthetic-lora-artist-mixer",
-      "combine": "anima-txt2img-aesthetic-lora-artist-mixer",
-      "mix": "anima-txt2img-aesthetic-lora-artist-mixer",
-      "参考": "anima-txt2img-aesthetic-lora-instantref",
-      "参考图": "anima-txt2img-aesthetic-lora-instantref",
-      "ref": "anima-txt2img-aesthetic-lora-instantref",
-      "像她": "anima-txt2img-aesthetic-lora-instantref",
-      "像他": "anima-txt2img-aesthetic-lora-instantref"
-    }
-  },
   "random_artist_mode": {
     "description": "未指定画风时的画师策略。off=不注入,使用默认风格;pool=从 fjdk 翻译表 top-N 池随机抽取一个画师注入(避免每次画风雷同);fixed=固定使用下方 random_artist_fixed 指定的画师(英文 tag,不带 @,如 ke-ta / hisahiko)。也影响 /redraw 的随机换画师行为",
     "type": "string",

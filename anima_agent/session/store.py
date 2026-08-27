@@ -36,6 +36,9 @@ class SessionContext:
     # 换 seed 重绘(/redraw):上次**最终提交给 ComfyUI 的 payload**(含自动修正),
     # 原样重发只换 seed;以及重绘任务追踪/提示用的来源信息。
     last_payload: Optional[dict] = None
+    # 最终提交 payload 里正向 CLIP 节点的 text(地面真值)，edit workflow 里占位符
+    # __POSITIVE__ 不会被替换，直接从 draw 结果继承最准确。
+    submitted_positive: str = ""
     last_user_text: str = ""
     last_workflow_id: str = ""
     # 是否随机画风模式:本次生成由 pipeline 随机池注入画师(用户未指定)。

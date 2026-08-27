@@ -448,7 +448,6 @@ class AnimaStar(Star):
             wait_for_image=bool(config.get("wait_for_image", True)),
             max_concurrent=int(config.get("max_concurrent") or 3),
             nsfw=bool(config.get("nsfw", False)),
-            workflow_intent_map=config.get("workflow_intent_map"),
             ref_tagger=bool(config.get("ref_tagger", True)),
             reply_with_prompt=bool(config.get("reply_with_prompt", False)),
             llm_vision_complete=self._astrbot_llm_vision,

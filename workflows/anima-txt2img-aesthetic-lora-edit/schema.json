@@ -1,0 +1,188 @@
+{
+  "description": "",
+  "enabled": true,
+  "parameters": {
+    "prompt_2": {
+      "node_id": "2",
+      "field": "text",
+      "required": true,
+      "type": "string",
+      "description": "Edit positive prompt (what to generate on the left side)"
+    },
+    "prompt_3": {
+      "node_id": "3",
+      "field": "text",
+      "required": true,
+      "type": "string",
+      "description": "Edit negative prompt (comma-separated tags)"
+    },
+    "ref_image": {
+      "node_id": "20",
+      "field": "image",
+      "required": true,
+      "type": "image",
+      "description": "Reference image for edit (resize to 768px longest side)"
+    },
+    "resize_height": {
+      "node_id": "25",
+      "field": "custom_height",
+      "required": false,
+      "type": "int",
+      "description": "Resize reference to this height (default 768)"
+    },
+    "batch_size": {
+      "node_id": "55",
+      "field": "amount",
+      "required": false,
+      "type": "int",
+      "description": "Batch size (number of variants)"
+    },
+    "seed": {
+      "node_id": "40",
+      "field": "seed",
+      "required": false,
+      "type": "int",
+      "description": "Random seed"
+    },
+    "steps": {
+      "node_id": "40",
+      "field": "steps",
+      "required": false,
+      "type": "int",
+      "description": "Generation steps"
+    },
+    "filename_prefix": {
+      "node_id": "9",
+      "field": "filename_prefix",
+      "required": false,
+      "type": "string",
+      "description": "Output file prefix"
+    },
+    "rtx_vsr_quality": {
+      "node_id": "10",
+      "field": "quality",
+      "required": false,
+      "type": "string",
+      "description": "RTX VSR quality: LOW, MEDIUM, HIGH, ULTRA"
+    },
+    "fls_sharpness": {
+      "node_id": "40",
+      "field": "sharpness",
+      "required": false,
+      "type": "float",
+      "description": "FLSampler sharpness (default 0.5)"
+    },
+    "fls_fovea_strength": {
+      "node_id": "40",
+      "field": "fovea_strength",
+      "required": false,
+      "type": "float",
+      "description": "FLSampler texture strength (default 3.0)"
+    },
+    "fls_mask_inertia": {
+      "node_id": "40",
+      "field": "mask_inertia",
+      "required": false,
+      "type": "float",
+      "description": "FLSampler focus inertia (default 0.85)"
+    },
+    "fls_cfg": {
+      "node_id": "40",
+      "field": "cfg",
+      "required": false,
+      "type": "float",
+      "description": "CFG scale (default 1.0)"
+    },
+    "fls_layer_filter": {
+      "node_id": "40",
+      "field": "layer_filter",
+      "required": false,
+      "type": "string",
+      "description": "U-Net layer filter"
+    },
+    "fls_sampler_name": {
+      "node_id": "40",
+      "field": "sampler_name",
+      "required": false,
+      "type": "string",
+      "description": "Sampler name (default dpmpp_2m_sde)"
+    },
+    "fls_scheduler": {
+      "node_id": "40",
+      "field": "scheduler",
+      "required": false,
+      "type": "string",
+      "description": "Scheduler (default simple)"
+    },
+    "fls_denoise": {
+      "node_id": "40",
+      "field": "denoise",
+      "required": false,
+      "type": "float",
+      "description": "Denoise strength (default 1.0)"
+    },
+    "lora_smooth_strength": {
+      "node_id": "41",
+      "field": "strength_model",
+      "required": false,
+      "type": "float",
+      "description": "Smooth_Booster LoRA strength (default 0.5)"
+    },
+    "lora_stabilizer_strength": {
+      "node_id": "42",
+      "field": "strength_model",
+      "required": false,
+      "type": "float",
+      "description": "illustriousXL stabilizer LoRA strength (default 0.5)"
+    },
+    "lllite_strength": {
+      "node_id": "38",
+      "field": "strength",
+      "required": false,
+      "type": "float",
+      "description": "AnimaLLLiteApply inpaint patch strength (default 1.0)"
+    },
+    "lllite_start": {
+      "node_id": "38",
+      "field": "start_percent",
+      "required": false,
+      "type": "float",
+      "description": "AnimaLLLiteApply start step ratio (default 0)"
+    },
+    "lllite_end": {
+      "node_id": "38",
+      "field": "end_percent",
+      "required": false,
+      "type": "float",
+      "description": "AnimaLLLiteApply end step ratio (default 1.0)"
+    },
+    "teacache_threshold": {
+      "node_id": "36",
+      "field": "threshold",
+      "required": false,
+      "type": "float",
+      "description": "TeaCache threshold (default 0.15)"
+    },
+    "teacache_version": {
+      "node_id": "36",
+      "field": "teacache_version",
+      "required": false,
+      "type": "string",
+      "description": "TeaCache version: v1 (Legacy Fast), v2 (Standard Precise)"
+    },
+    "crop_position": {
+      "node_id": "56",
+      "field": "crop_position",
+      "required": false,
+      "type": "string",
+      "description": "Crop position: right (keep original image after split)"
+    },
+    "crop_sharpening": {
+      "node_id": "56",
+      "field": "sharpening",
+      "required": false,
+      "type": "float",
+      "description": "Crop sharpening (default 0)"
+    }
+  }
+}

@@ -36,6 +36,13 @@ MODIFY = "modify"
 ARTIST_MIXER = "artist_mixer"
 AMBIGUOUS = "ambiguous"
 
+# 意图 → 默认工作流 ID 映射（resolve_workflow 可按实际情况覆盖）
+_WORKFLOW_FOR_INTENT: dict[str, str] = {
+    NEW: "anima-txt2img-aesthetic-lora",
+    MODIFY: "anima-txt2img-aesthetic-lora-edit",
+    ARTIST_MIXER: "anima-txt2img-aesthetic-lora-artist-mixer",
+}
+
 ASK_THRESHOLD = 0.75  # 低于此置信度 → 反问用户
 
 # 显式新图:出现即强制走 new
@@ -49,24 +56,7 @@ _NEW_PATTERNS = [
     r"^全新的",
     r"^new\b",
 ]
-# 显式修改:出现即强制走 modify
-_MODIFY_PATTERNS = [
-    r"^修改",
-    r"^改一下",
-    r"^把上一张",
-    r"^上一张",
-    r"^刚才那张",
-    r"^这张图",
-    r"^(再|帮)?我?改改",
-]
-# 修改动词(需与上一轮指代/属性词共现才算强信号)
-_MODIFY_VERBS = re.compile(r"换成|改成|改为|换掉|去掉|删掉|移除|加上|添加|换成|变更|调整")
-# 上一轮指代或属性域(暗示在描述已存在的图)
-_MODIFY_REFERENTS = re.compile(
-    r"上一张|刚才那张|这张图|原来的|之前的|她的|他的|头发|发色|眼睛|表情|背景|服装|"
-    r"裙子|画面|构图|光线|姿势|角度|场景|"
-    r"太糊|发糊|有点糊|不够锐|不锐|太软|纹理不足|细节不够"
-)
+
 # 强新图信号(描述一张全新内容的画)
 _NEW_HINTS = re.compile(r"画[一壹张个]|来[一壹张个]|生成[一壹张个]|创作|绘制")
 
@@ -124,19 +114,27 @@ class IntentDecision:
 
 
 def classify_rules(text: str) -> Optional[IntentDecision]:
-    """规则层:显式前缀与启发式。返回 None 表示规则无法判定。"""
+    """规则层:显式前缀与融合关键词。MODIFY 由命令层触发,不在规则层判断。
+
+    只区分: NEW / ARTIST_MIXER。判不了返回 None,交 LLM。
+    """
     t = text.strip()
 
-    for pat in _MODIFY_PATTERNS:
-        if re.search(pat, t, re.IGNORECASE):
-            return IntentDecision(MODIFY, 1.0, "explicit")
     for pat in _NEW_PATTERNS:
         if re.search(pat, t, re.IGNORECASE):
-            return IntentDecision(NEW, 1.0, "explicit")
-    if _MODIFY_VERBS.search(t) and _MODIFY_REFERENTS.search(t):
-        return IntentDecision(MODIFY, 0.8, "rules")
-    if _NEW_HINTS.search(t) and not _MODIFY_VERBS.search(t):
-        return IntentDecision(NEW, 0.7, "rules")
+            return IntentDecision(NEW, 1.0, "explicit",
+                                workflow_id=_WORKFLOW_FOR_INTENT[NEW])
+
+    # 融合关键词(显式触发 artist_mixer)
+    if re.search(r"融合|混合|结合|mix|combine", t, re.IGNORECASE):
+        return IntentDecision(ARTIST_MIXER, 1.0, "explicit",
+                            workflow_id=_WORKFLOW_FOR_INTENT[ARTIST_MIXER])
+
+    # 强新图信号
+    if _NEW_HINTS.search(t):
+        return IntentDecision(NEW, 0.8, "rules",
+                            workflow_id=_WORKFLOW_FOR_INTENT[NEW])
+
     return None
 
 
@@ -169,11 +167,10 @@ class IntentRouter:
         # 1. 显式指定(命令层开关 / 反问后的回答)
         if explicit in (NEW, MODIFY, ARTIST_MIXER):
             if explicit == MODIFY and not has_session:
-                return IntentDecision(NEW, 0.9, "no_session_fallback")
-            if explicit == ARTIST_MIXER:
-                return IntentDecision(ARTIST_MIXER, 1.0, "explicit",
-                                      workflow_id="anima-txt2img-aesthetic-lora-artist-mixer")
-            return IntentDecision(explicit, 1.0, "explicit")
+                return IntentDecision(NEW, 0.9, "no_session_fallback",
+                                      workflow_id=_WORKFLOW_FOR_INTENT[NEW])
+            return IntentDecision(explicit, 1.0, "explicit",
+                                  workflow_id=_WORKFLOW_FOR_INTENT.get(explicit, ""))
 
         # 2. 规则(高置信直接返回)
         ruled = classify_rules(user_text)
@@ -190,11 +187,14 @@ class IntentRouter:
                 llm_dec.confirmed_artists = confirmed_artists
                 return llm_dec
 
-        # 4. 兜底:无 LLM 且规则无高置信 → 根据是否有会话决定
-        if has_session and ruled is not None:
-            return IntentDecision(AMBIGUOUS, ruled.confidence, ruled.source,
+        # 4. 兜底:无 LLM → 有会话则问用户(意图不清),无会话则默认 new
+        if has_session:
+            # rules 匹配了但置信不够高，或没匹配（返回 None）
+            return IntentDecision(AMBIGUOUS, 0.6, "fallback",
                                   confirmed_artists=confirmed_artists or [])
-        return IntentDecision(NEW, 0.5, "fallback", confirmed_artists=confirmed_artists or [])
+        return IntentDecision(NEW, 0.5, "fallback",
+                            workflow_id=_WORKFLOW_FOR_INTENT[NEW],
+                            confirmed_artists=confirmed_artists or [])
 
     async def _resolve_artists(self, user_text: str) -> list[str]:
         """提取疑似画师名并用标签库确认,返回确认的 artist 名(去 @,小写)。"""
@@ -265,8 +265,12 @@ class IntentRouter:
                 return IntentDecision(AMBIGUOUS, conf, "llm")
             if intent == ARTIST_MIXER:
                 return IntentDecision(ARTIST_MIXER, conf, "llm",
-                                    workflow_id="anima-txt2img-aesthetic-lora-artist-mixer")
-            return IntentDecision(intent, conf, "llm")
+                                    workflow_id=_WORKFLOW_FOR_INTENT[ARTIST_MIXER])
+            if intent == MODIFY:
+                return IntentDecision(MODIFY, conf, "llm",
+                                    workflow_id=_WORKFLOW_FOR_INTENT[MODIFY])
+            return IntentDecision(intent, conf, "llm",
+                                workflow_id=_WORKFLOW_FOR_INTENT.get(intent, ""))
         except Exception as e:
             print(f"[intent] LLM intent classify failed: {e}")
             return None

@@ -28,7 +28,6 @@ from anima_agent.agent.intent import AMBIGUOUS, ARTIST_MIXER, MODIFY, NEW, Inten
 from anima_agent.agent.pipeline import (
     INSTANT_REF_BASE,
     INSTANT_REF_WORKFLOW,
-    INSTANTREF_IPADAPTER_WORKFLOW,
     AgentPipeline,
     GenerationResult,
     _is_ref_capable_workflow,
@@ -75,7 +74,9 @@ def _probe_py312() -> tuple[bool, str]:
     try:
         out = subprocess.run(
             ["py", "-3.12", "--version"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
     except Exception as e:
         return False, f"py 启动器探测失败: {e}"
@@ -103,7 +104,6 @@ class AnimaAgentPlugin:
         max_concurrent: int = 3,
         generation_timeout: float = 1800.0,
         nsfw: bool = False,
-        workflow_intent_map: dict[str, str] | None = None,
         ref_tagger: bool = True,
         instantref_params: dict | None = None,
         reply_with_prompt: bool = False,
@@ -127,9 +127,7 @@ class AnimaAgentPlugin:
                 fixed=固定使用 random_artist_fixed 指定的画师。同时影响 /redraw 行为。
             random_artist_top_n: 池大小(仅 pool 模式)。
             random_artist_fixed: 固定画师英文 tag(仅 fixed 模式,不带 @)。
-            workflow_intent_map: 意图关键词 → 工作流 ID 映射。
-                用户 prompt 含某关键词时自动切换对应工作流(如 {"融合": "...artist-mixer"})。
-                优先级从高到低,匹配首个即停。
+            ref_tagger: 参考图打标开关。
             instantref_params: InstantRef 基线参数(程序化注入/测试用,面板已无此配置;
                 实际调试交给 LLM 经 tune_params 调)。
             reply_with_prompt: 开关。开启后,出图成功回复(「已生成[图片]」)里附带
@@ -160,12 +158,12 @@ class AnimaAgentPlugin:
         self.pipeline.set_tracker(self.tracker)
         self.sessions = SessionStore()
         # 意图路由:带标签库画师确认(LLM 可能不认识 ke-ta 是画师,靠库确认)
-        self.intent_router = IntentRouter(llm_complete, artist_resolver=self._resolve_artist_names)
+        self.intent_router = IntentRouter(
+            llm_complete, artist_resolver=self._resolve_artist_names
+        )
         self.wait_for_image = wait_for_image
         self.generation_timeout = generation_timeout
         self._started = False
-        # 意图关键词 → 工作流映射(从配置注入,优先级从高到低)
-        self.workflow_intent_map: dict[str, str] = workflow_intent_map or {}
         # 未指定画风时的画师策略(从配置注入)
         self.random_artist_mode: str = random_artist_mode  # off / pool / fixed
         self.random_artist_top_n: int = max(1, int(random_artist_top_n))
@@ -199,7 +197,9 @@ class AnimaAgentPlugin:
             self._session_locks[session_id] = lock
         return lock
 
-    async def _resolve_artist_names(self, candidates: list[str]) -> list[tuple[str, str]]:
+    async def _resolve_artist_names(
+        self, candidates: list[str]
+    ) -> list[tuple[str, str]]:
         """用标签库确认疑似画师名,返回 (原始名, canonical artist tag) 列表。
 
         只有 category='artists' 精确命中才算确认;查不到的不算画师
@@ -305,7 +305,7 @@ class AnimaAgentPlugin:
                     f"[tagger] 双路打标成功(miaoshouai={len(tagger_result.miaoshouai_tags)}字符, "
                     f"qwen_vl={len(tagger_result.qwen_vl_tags)}字符, "
                     f"style={len(tagger_result.style_tags)}字符,"
-                    f"耗时{time.monotonic()-t_tag:.1f}s,已上传 {ref_image_filename}): "
+                    f"耗时{time.monotonic() - t_tag:.1f}s,已上传 {ref_image_filename}): "
                     f"{ref_tags[:160]}"
                 )
             except Exception as e:
@@ -330,7 +330,9 @@ class AnimaAgentPlugin:
             confirmed_artists=confirmed_artists,
             ref_tags=ref_tags,
         )
-        print(f"[意图] prompt={user_text[:80]} | 意图={decision.intent} 置信={decision.confidence:.2f} 来源={decision.source} | workflow={workflow_id}→{decision.workflow_id or '(同)'} | ref_image={bool(ref_image)}")
+        print(
+            f"[意图] prompt={user_text[:80]} | 意图={decision.intent} 置信={decision.confidence:.2f} 来源={decision.source} | workflow={workflow_id}→{decision.workflow_id or '(同)'} | ref_image={bool(ref_image)}"
+        )
         t_intent = time.monotonic() - t1
 
         if decision.intent == AMBIGUOUS:
@@ -357,7 +359,9 @@ class AnimaAgentPlugin:
                 ref_image_filename = stored_fn
                 if not ref_tags:
                     ref_tags = stored_tags or ""
-                print(f"[handle_draw] 复用上一张参考图 {stored_fn!r}(用户未附图,按参考反馈/修改处理)")
+                print(
+                    f"[handle_draw] 复用上一张参考图 {stored_fn!r}(用户未附图,按参考反馈/修改处理)"
+                )
 
         # 会话角色记忆:本次没带参考图(也没有复用),但会话里认识某个角色 →
         # 把角色设定注入出稿,让一次对话内模型保持该角色外观(新图也生效)。
@@ -367,19 +371,10 @@ class AnimaAgentPlugin:
             if stored_tags:
                 character_sheet = stored_tags
 
-        # 意图驱动工作流切换(如 artist_mixer → artist-mixer workflow)
+        # 意图驱动工作流切换（由 intent.py 的 IntentDecision.workflow_id 决定）
         effective_workflow = decision.workflow_id or workflow_id
 
-        # 关键词匹配覆盖(优先级最高,让配置动态控制工作流切换)
-        if self.workflow_intent_map:
-            for keyword, target_workflow in self.workflow_intent_map.items():
-                if keyword in user_text:
-                    effective_workflow = target_workflow
-                    break
-
-        # 参考图工作流解析:附图/复用会话文件名 → 默认工作流切组合参考工作流
-        # (快速 LoRA + IP-Adapter);其他工作流追加 -ref;无参考时参考工作流回退基础版本
-        # 回退/改路由都要在聊天里提示,防止用户以为参考工作流生效了(不静默降级)。
+        # 参考图工作流解析：有附图时，非参考工作流切 edit；无附图时参考工作流回退基础版
         route_notes: list[str] = []
         has_ref = bool(ref_image or ref_image_filename)
         pre_workflow = effective_workflow
@@ -399,12 +394,12 @@ class AnimaAgentPlugin:
             elif (
                 has_ref
                 and not _is_ref_capable_workflow(pre_workflow)
-                and resolved_workflow == INSTANTREF_IPADAPTER_WORKFLOW
+                and resolved_workflow == INSTANT_REF_WORKFLOW
                 and pre_workflow != INSTANT_REF_BASE
             ):
-                # 手动 *-ref 不存在 → 改用 instantref-ipadapter 组合兜底,提示一下
+                # 手动 *-ref/-edit 不存在 → 改用 edit 工作流兜底
                 route_notes.append(
-                    f"工作流 {pre_workflow} 没有参考版本,已改用 {resolved_workflow}(IP-Adapter + InstantReferenceLoRA 组合)"
+                    f"工作流 {pre_workflow} 没有参考版本,已改用 edit 工作流(InstantReferenceLoRA 分屏编辑模式)"
                 )
 
         try:
@@ -459,6 +454,7 @@ class AnimaAgentPlugin:
                 character_sheet=ref_tags or character_sheet or None,
                 # 换 seed 重绘(/redraw):存最终提交给 ComfyUI 的 payload,原样重发只换 seed
                 last_payload=result.submitted_payload,
+                submitted_positive=result.submitted_positive,
                 last_user_text=user_text,
                 last_workflow_id=effective_workflow,
                 # 随机画风标记:用户没指定画师时由 pipeline 自动抽,redraw 也会换随机
@@ -469,7 +465,9 @@ class AnimaAgentPlugin:
 
         label = "修改重绘" if decision.is_modification else "新图"
         total = time.monotonic() - t0
-        print(f"[handle_draw] 完成 | status={'done' if result.image_bytes_list else 'queued'} | 总耗时={total:.1f}s | seed={result.args.seed} | subject={str(result.brief.subject or '')[:40]}")
+        print(
+            f"[handle_draw] 完成 | status={'done' if result.image_bytes_list else 'queued'} | 总耗时={total:.1f}s | seed={result.args.seed} | subject={str(result.brief.subject or '')[:40]}"
+        )
         note = ("\n⚠️ " + "\n".join(route_notes)) if route_notes else ""
         prompt_suffix = self._prompt_reply_suffix(result)
         if self.wait_for_image and result.image_bytes_list:
@@ -533,14 +531,20 @@ class AnimaAgentPlugin:
         #   off / random_style=False → 不换
         new_artist_picked: Optional[str] = None  # 本次 redraw 实际换到的画师(若成功)
         next_artist: Optional[str] = None
-        if ctx.random_style and ctx.last_random_artist and self.random_artist_mode == "pool":
+        if (
+            ctx.random_style
+            and ctx.last_random_artist
+            and self.random_artist_mode == "pool"
+        ):
             try:
                 from anima_agent.tag_service.cn_tag_resolver import random_top_artist
+
                 next_artist = random_top_artist(n=self.random_artist_top_n)
                 if next_artist and next_artist != ctx.last_random_artist:
                     logger.info(
                         "redraw 随机画风:换 @%s → @%s",
-                        ctx.last_random_artist, next_artist,
+                        ctx.last_random_artist,
+                        next_artist,
                     )
                     new_artist_picked = next_artist
                 else:
@@ -605,6 +609,7 @@ class AnimaAgentPlugin:
                 ref_tags=ctx.ref_tags,
                 character_sheet=ctx.character_sheet,
                 last_payload=last_payload,
+                submitted_positive=_submitted_positive_text(last_payload, ctx.submitted_positive),
                 last_user_text=ctx.last_user_text,
                 last_workflow_id=ctx.last_workflow_id,
                 random_style=ctx.random_style,
@@ -618,7 +623,7 @@ class AnimaAgentPlugin:
             brief=ctx.last_brief,
             three_layer=ctx.last_three_layer,
             image_bytes_list=images,
-            submitted_positive=_submitted_positive_text(last_payload, None),
+            submitted_positive=_submitted_positive_text(last_payload, ctx.submitted_positive),
         )
         label = f"重绘 x{times}" if times > 1 else "重绘"
         prompt_suffix = self._prompt_reply_suffix(result)
@@ -657,7 +662,9 @@ class AnimaAgentPlugin:
         # return f"\nPrompt: {p11}"
         return p11
 
-    async def list_tasks(self, user_id: str, include_completed: bool = False) -> list[dict]:
+    async def list_tasks(
+        self, user_id: str, include_completed: bool = False
+    ) -> list[dict]:
         """查询用户的所有生图任务。
 
         Args:
@@ -667,7 +674,9 @@ class AnimaAgentPlugin:
         Returns:
             任务列表,每项含 task_id / prompt_preview / status / created_at
         """
-        tasks = await self.tracker.get_user_tasks(user_id, include_completed=include_completed)
+        tasks = await self.tracker.get_user_tasks(
+            user_id, include_completed=include_completed
+        )
         return [
             {
                 "task_id": t.task_id,
@@ -822,11 +831,13 @@ class AnimaAgentPlugin:
         from anima_agent.comfyui.tagger import TEXT_NODE_CANDIDATES, _TEXT_NODE_NAME_RE
 
         tagger_missing = [
-            c for c in (
+            c
+            for c in (
                 "Miaoshouai_Tagger",
                 "ResizeImagesByLongerEdge",
                 "TextGenerate",  # Qwen3-VL 文本生成节点(tagger-qwenvl 双路打标用)
-            ) if c not in info
+            )
+            if c not in info
         ]
         text_nodes = [c for c in TEXT_NODE_CANDIDATES if c in info]
         if not text_nodes:

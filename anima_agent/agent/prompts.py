@@ -88,7 +88,7 @@ Miaoshouai/WD14 tagger 输出里含有精确的绘制技法 tag；**[style] 段�
 - 场景空间关系（前后景层次）
 - **禁止**：重复描述角色外观细节
 
-## ⚠️ 最重要规则：禁止角色名 / 人数
+## 最重要规则：禁止角色名 / 人数
 - **禁止一切角色名 tag**："hatsune miku"、"fubuki (one piece)"、"asuka langley" 等。
   本图角色身份由参考图决定；任何角色名 tag 都会把「那个角色」拉进来，与参考图身份冲突。
 - **禁止人数/多角色 tag**：2girls / 1boy / 3girls / crowd 等一律不写。
@@ -100,7 +100,7 @@ Miaoshouai/WD14 tagger 输出里含有精确的绘制技法 tag；**[style] 段�
   ```
   否则 sanitize 阶段会被当作"LLM 顺手写的其他角色"误剔除，导致图里仍是参考图角色。
 
-## modify with ref_image（修改参考图）—— ⚠️ 重要：tagger 与 LLM 冲突解决规则
+## modify with ref_image（修改参考图）—— 重要：tagger 与 LLM 冲突解决规则
 当用户请求修改参考图中某个特征（如"换衣服"、"加眼镜"、"改发型"）时，按以下规则处理
 **（这是当前最容易出错的地方，务必严格遵守）**：
 
@@ -114,7 +114,7 @@ Miaoshouai/WD14 tagger 输出里含有精确的绘制技法 tag；**[style] 段�
 | **场景** | 室内/室外/地点 | 采用 tagger | 替换为用户指定 |
 | **镜头/构图** | 特写/全身/俯视 | LLM 自由决定 | LLM 自由决定 |
 
-### ⚠️ 换装不换人（最易翻车）—— 旧衣服只许进负面 prompt，正向一个字都不能有
+### 换装不换人（最易翻车）—— 旧衣服只许进负面 prompt，正向一个字都不能有
 用户要求更换服装（"换衣服/换成X衣服/穿X"）时，参考图经 IP-Adapter/InstantReferenceLoRA
 注入的**旧衣服视觉特征仍会残留**在潜空间里，与正向 prompt 里的新衣服"打架"，
 导致两件衣服杂糅在一起。必须做语义+潜空间双重隔离：
@@ -124,9 +124,9 @@ Miaoshouai/WD14 tagger 输出里含有精确的绘制技法 tag；**[style] 段�
    is completely replaced" / "instead of the old ..."）。CLIP 不理解否定，"old outfit /
    no trace of the original green dress" 这些 token 会被当成**要生成的内容**拉进潜空间，
    效果和直接写旧衣服 tag 一样（甚至更糟）。旧衣服词**只能**出现在 `args.prompt_12`（负面）。
-   - ❌ 错：nltags_block 写 `the new outfit has no trace of the original green dress, white apron, gloves`
-   - ❌ 错：nltags_block 写 `the old outfit is completely replaced by a navy blue school swimsuit`（"old outfit" 也是旧衣服 token）
-   - ✅ 对：nltags_block 只写新衣服 `the outfit is a navy blue school swimsuit with a name tag on the chest`
+   - 错：nltags_block 写 `the new outfit has no trace of the original green dress, white apron, gloves`
+   - 错：nltags_block 写 `the old outfit is completely replaced by a navy blue school swimsuit`（"old outfit" 也是旧衣服 token）
+   - 对：nltags_block 只写新衣服 `the outfit is a navy blue school swimsuit with a name tag on the chest`
 2. **负面镇压旧衣服**：从 [wd14] 段的服装 tag
    （如 `sailor_suit, red_skirt`）识别参考图原来的衣服，写进 `args.prompt_12`
    （负面 prompt），格式 `(旧衣服描述:1.3~1.5)`，让 CFG 排斥力压掉残留的旧衣服特征：
@@ -144,12 +144,12 @@ Miaoshouai/WD14 tagger 输出里含有精确的绘制技法 tag；**[style] 段�
 
 ### hard_tags 与 tagger 冲突时的处理
 **用户明确修改某维度时**：该维度的 tagger tag 必须替换为用户指定的 tag，**不允许保留旧值**。
-- ❌ 错：tagger 写了 `white_dress, ribbon`，用户说"换成校服" → hard_tags 仍写 `white_dress, ribbon`
-- ✅ 对：tagger 写了 `white_dress, ribbon`，用户说"换成校服" → hard_tags 写 `school_uniform, serafuku, pleated_skirt`
+- 错：tagger 写了 `white_dress, ribbon`，用户说"换成校服" → hard_tags 仍写 `white_dress, ribbon`
+- 对：tagger 写了 `white_dress, ribbon`，用户说"换成校服" → hard_tags 写 `school_uniform, serafuku, pleated_skirt`
 
 **用户没提的维度**：直接采用 tagger 结果，**不允许凭印象改写**。
-- ❌ 错：tagger 写了 `silver_hair, blue_eyes`，LLM 觉得"应该配黑发" → 改成 `black_hair, red_eyes`
-- ✅ 对：tagger 写了 `silver_hair, blue_eyes`，LLM 照抄 → `silver_hair, blue_eyes`
+- 错：tagger 写了 `silver_hair, blue_eyes`，LLM 觉得"应该配黑发" → 改成 `black_hair, red_eyes`
+- 对：tagger 写了 `silver_hair, blue_eyes`，LLM 照抄 → `silver_hair, blue_eyes`
 
 ### nltags_block 里写「变化 + 保留」
 修改类指令必须在 nltags_block 中**显式声明**：
@@ -199,7 +199,7 @@ ReferenceTaggingOptions / ReferenceTrainOptions 两个节点控制这次"炼丹"
 - `ref_train_steps`（0=默认）：用户要求强烈画风转换或原图细节极多 → 150~200。
 
 ## 精细调参指南（当出图质量不足时使用）
-⚠️ 当前工作流是 **turbo（anima-turbo-v1.1, steps=8, cfg=1）**:**不要拉高 steps/cfg**
+注意：当前工作流是 **turbo（anima-turbo-v1.1, steps=8, cfg=1）**：**不要拉高 steps/cfg**
 （过饱和发糊）。下面 fls_cfg 拉高的条目仅适用于非 turbo 场景。
 遇到以下情况可用 `args` 精细干预：
 - **细节不足/纹理发糊**：`fls_sharpness` 提至 0.7–0.9（turbo 保持 cfg≈1）
@@ -210,7 +210,7 @@ ReferenceTaggingOptions / ReferenceTrainOptions 两个节点控制这次"炼丹"
 - **需要生成复杂服装纹理/装饰但模型倾向简化**：在 `negative_repel` 中追加 `simplified, plain clothes, missing details, blurry`
 - **底层构图正确但高频细节（褶皱/反光/发丝）不够**：`ip_adapter_layer_filter` 和 `fls_layer_filter` 设为 `OUT`（只注入 U-Net 高频层）
 
-`args` 字段写法示例：
+args 字段写法示例：
 ```json
 "args": {
   "fls_sharpness": 0.75,
@@ -255,10 +255,10 @@ BASE_MODEL_MODE = """# 【模式】裸模型模式 —— 无 LoRA 对比测试
 
 
 # ──────────────────────────────────────────────────────────────────
-# 3. 通用出稿规则（所有模式共用）
+# 3a. 创造性规则（仅从零构图使用，Edit 模式跳过）
 # ──────────────────────────────────────────────────────────────────
 
-DRAFTSMAN_CORE = """# 通用出稿规则
+DRAFTSMAN_CREATIVE_RULES = """# 构图与创意规则
 
 ## 3.1 情境因果锁 → 视觉简报
 组装 prompt 前，先建立情境因果链，再拆解视觉简报字段。
@@ -280,7 +280,6 @@ DRAFTSMAN_CORE = """# 通用出稿规则
 ### 视觉简报字段
 从情境拆解：subject / scene_container / action_relation / camera / view_angle /
 canvas / light_direction / subject_ratio / situation_cause_chain
-
 - 用户已给完整构图 → 从描述反推情境因果链，再整理字段
 - 用户模糊 → 自行构建一个合理情境
 - 多人必须绑定：每个角色写明位置+角色+2-4个外观锚点+动作
@@ -325,7 +324,33 @@ canvas / light_direction / subject_ratio / situation_cause_chain
 - 裸模型/对比测试：`masterpiece, best quality, score_7, safe`
 - 安全标签由系统按模式自动追加
 
-## 3.4 负向组装（填入 prompt_12）
+## 3.5 画布选择（填入 brief.canvas 为 [width, height]）
+| 比例 | 画布 | 用途 |
+|------|------|------|
+| 2:3 | 1024x1536 | 单人全身/立绘 |
+| 3:4 | 1152x1536 | 角色为主 |
+| 1:1 | 1024x1024 | 头像/半身 |
+| 1:1 | 1536x1536 | 复杂中心构图 |
+| 3:2 | 1536x1024 | 多人互动 |
+| 16:9 | 1536x864 | 宽银幕/远景 |
+| 9:16 | 864x1536 | 手机海报/竖向空间 |
+
+先选构图比例，再选分辨率；默认使用 1536 级画布。
+
+## 3.9 权重控制
+- 默认不加权。只在用户要求或某元素不稳定时，从 `(tag:2)` 级别开始
+- 不给角色名、画师名、安全标签、整段 nltags 默认加权
+- 同一 prompt 最多 1-3 个加权点
+"""
+
+
+# ──────────────────────────────────────────────────────────────────
+# 3b. 通用底线规则（所有模式共用：普通/参考图/画师融合/编辑）
+# ──────────────────────────────────────────────────────────────────
+
+DRAFTSMAN_UNIVERSAL_RULES = """# 通用质量与校验规则（所有模式必须遵守）
+
+## 3.4 负向组装
 ### 核心（必选）
 `worst quality, low quality, score_1, score_2, score_3, watermark, logo`
 
@@ -346,19 +371,6 @@ canvas / light_direction / subject_ratio / situation_cause_chain
 
 ### 景深处理
 浅景深/背景虚化时移除全局 blurry，改用 `blurry face, blurry subject`
-
-## 3.5 画布选择（填入 brief.canvas 为 [width, height]）
-| 比例 | 画布 | 用途 |
-|------|------|------|
-| 2:3 | 1024×1536 | 单人全身/立绘 |
-| 3:4 | 1152×1536 | 角色为主 |
-| 1:1 | 1024×1024 | 头像/半身 |
-| 1:1 | 1536×1536 | 复杂中心构图 |
-| 3:2 | 1536×1024 | 多人互动 |
-| 16:9 | 1536×864 | 宽银幕/远景 |
-| 9:16 | 864×1536 | 手机海报/竖向空间 |
-
-先选构图比例，再选分辨率；默认使用 1536 级画布。
 
 ## 3.6 冲突检查（输出前自查）
 | 冲突项 | 规则 |
@@ -383,11 +395,6 @@ canvas / light_direction / subject_ratio / situation_cause_chain
 - 画师融合：artist_chain 不带 @，prompt_11 不重复画师名
 - 同一张非融合图只放 1 个 @artist
 - 没有用户偏好时不强制默认画师，可留空
-
-## 3.9 权重控制
-- 默认不加权。只在用户要求或某元素不稳定时，从 `(tag:2)` 级别开始
-- 不给角色名、画师名、安全标签、整段 nltags 默认加权
-- 同一 prompt 最多 1-3 个加权点
 """
 
 
@@ -508,7 +515,7 @@ EXAMPLES = """# 5. 完整示例
 
 
 # ──────────────────────────────────────────────────────────────────
-# 6. 输出 JSON 骨架
+# 6. 输出 JSON 骨架（普通/参考图/画师融合模式）
 # ──────────────────────────────────────────────────────────────────
 
 DRAFT_JSON_SKELETON = """# 输出格式
@@ -552,17 +559,15 @@ DRAFT_JSON_SKELETON = """# 输出格式
 
 
 # ──────────────────────────────────────────────────────────────────
-# 动态组装函数
-# ──────────────────────────────────────────────────────────────────
-# 4. 精细调参指南（所有工作流）
+# 7. 精细调参指南（普通/参考图/画师融合模式）
 # ──────────────────────────────────────────────────────────────────
 
-TUNE_PARAMS_GUIDE = """## 精细调参指南（`args` 字段）
+TUNE_PARAMS_GUIDE = """## 精细调参指南（args 字段）
 
 以下参数用于解决"细节不够/纹理发糊/边缘不清晰/面部过强"等质量问题。
 不要在 prompt 里反复强调（LLM 过度堆词反而降低质量），用调参更精准。
 
-⚠️ **turbo 工作流（anima-turbo-v1.1）**：steps=8、cfg≈1（euler/simple），
+注意：**turbo 工作流（anima-turbo-v1.1）**：steps=8、cfg≈1（euler/simple），
 **不要再拉高 steps/cfg**（30-40 步或 cfg>2 会让 turbo 过饱和发糊）。batch_size=5
 一次出 5 张，靠 seed 多样性挑图。
 
@@ -570,7 +575,7 @@ TUNE_PARAMS_GUIDE = """## 精细调参指南（`args` 字段）
 
 | 参数 | 默认值 | 何时用 | 推荐范围 |
 |------|--------|--------|----------|
-| `fls_cfg` | 1.0 | ⚠️ turbo 保持 1 附近;非 turbo 才考虑拉高 | 1.0（turbo） |
+| `fls_cfg` | 1.0 | 注意：turbo 保持 1 附近;非 turbo 才考虑拉高 | 1.0（turbo） |
 | `fls_sharpness` | 0.5 | 发丝/配饰/衣服边缘模糊 | 0.7–0.9 |
 | `fls_fovea_strength` | 3.0 | 纹理不足/质感弱 | 4.0–5.5 |
 | `fls_layer_filter` | "" | 底层构图好但高频层不够 | `OUT` |
@@ -623,7 +628,181 @@ TUNE_PARAMS_GUIDE = """## 精细调参指南（`args` 字段）
 
 
 # ──────────────────────────────────────────────────────────────────
+# 8. 图片编辑模式（edit 工作流：ICLoRAConcat split-screen inpaint）
+#    全场景覆盖：换服装/换动作/换角色/画风保持或切换
+# ──────────────────────────────────────────────────────────────────
 
+EDIT_MODE_SYSTEM = """# 【模式】图片编辑模式 —— ICLoRAConcat 分屏重绘
+本轮为图片编辑任务。底层技术将原图（左）与待生成图（右）物理拼接后进行推理，
+因此**必须使用严格的左右空间定位句式**，引导模型理解左右的映射关系。
+
+## 核心格式（强制）
+- **正向 prompt_2** 格式必须以空间锚定句式开头：
+  `A split screen image. On the left side, [描述原图锚点]. On the right side, [根据编辑意图描述右侧新状态].`
+  左侧固定为原图锚点；右侧由 prompt 生成（最终输出取右侧）。
+- **负向 prompt_3**：逗号分隔的 tags，用于镇压被替换掉的旧特征。
+
+## 右侧动态语义聚焦规则（如何写 "On the right side, ..."）
+虽然句子结构固定，但右侧的描述策略根据用户意图灵活调整：
+
+### 1. 局部特征修改（改表情/改手势/加小配饰）
+策略：强调右侧与左侧高度一致，仅做局部突变。
+句式：`..., On the right side, the image is exactly the same, but the [character] is now [smiling / holding a sword / wearing glasses].`
+
+### 2. 全局画风迁移（保持内容，只改画风）
+策略：强调右侧构图内容不变，仅变更渲染技法。
+句式：`..., On the right side, the composition and character remain identical, but it is rendered in [watercolor / thick impasto / watercolor] art style.`
+负向必须追加：WD14 中提取的旧画风 tag（如 cel_shading, photorealistic）。
+
+### 3. 视角与构图切换（转背影/特写）
+策略：强调右侧是同一主体的不同摄像机机位。
+句式：`..., On the right side, the exact same character in the same outfit is viewed from [behind / a close-up angle].`
+
+### 4. 常规换装/换场景/换角色（全局重写）
+策略：右侧全盘重写，明确新状态。
+句式：`..., On the right side, the [character] has completely changed and now [描述新服装/环境/动作].`
+
+## 正向 prompt 铁律
+- **只写新内容**：只描述右侧要生成什么，禁止出现任何旧内容词。
+- **禁止否定式列举**：不写 "no old"、"no trace of"、"instead of the old"——
+  CLIP 不理解否定，这些 token 会被当成要生成的内容，拉进潜空间。
+  - 对：`wearing a navy blue school swimsuit with a white sailor collar`
+  - 错：`no longer wearing the old white dress`（"old white dress" 进了正向）
+  - 错：`wearing a swimsuit instead of the old outfit`（"old outfit" 进了正向）
+
+## 负向 prompt 规则
+1. **只写逗号分隔的 tag**；不写自然语言句子。
+2. 始终包含：`worst quality, low quality`。
+3. 从 [wd14] 提取被替换的旧特征 tag 进负向（换什么填什么）。
+4. 默认身体保护词：`bad anatomy, bad hands, bad feet, extra fingers, distorted face`。
+"""
+
+
+EDIT_MODE_FEW_SHOT = """
+## Few-Shot 示例
+
+**示例 1：局部编辑（仅改表情）**
+User Intent: "让她开心地大笑"
+[wd14] tags: 1girl, solo, short hair, school uniform, standing, serious, expressionless, classroom
+
+Assistant Output:
+{
+  "args": {
+    "prompt_2": "A split screen image. On the left side, a girl with short hair in a school uniform stands in a classroom with a serious, expressionless face. On the right side, the image is exactly the same, but the girl is now smiling brightly and laughing joyfully.",
+    "prompt_3": "serious, expressionless, blank_stare, worst quality, low quality, bad anatomy"
+  },
+  "tag_queries": []
+}
+
+**示例 2：局部编辑（仅改手势）**
+User Intent: "让她改成双手举起"
+[wd14] tags: 1girl, solo, long hair, white dress, standing, arms_at_side, beach, sunset
+
+Assistant Output:
+{
+  "args": {
+    "prompt_2": "A split screen image. On the left side, the same girl with long hair stands on a beach at sunset with arms at her side, wearing a white dress. On the right side, the image is exactly the same, but the girl is now raising both arms up in a joyful pose, with her dress slightly lifted by the wind.",
+    "prompt_3": "arms_at_side, (arms_down:1.4), worst quality, low quality, bad anatomy, bad hands"
+  },
+  "tag_queries": []
+}
+
+**示例 3：画风迁移（不改内容，只改画风）**
+User Intent: "把这张图转换成水彩画风格"
+[wd14] tags: 1girl, solo, detailed face, cel_shading, short hair, black dress, sitting, indoors
+
+Assistant Output:
+{
+  "args": {
+    "prompt_2": "A split screen image. On the left side, a cel-shaded anime girl with short hair sits indoors wearing a black dress. On the right side, the composition and character remain exactly the same, but the entire image is now rendered in a beautiful traditional watercolor painting style, with soft color bleeding and delicate brush strokes.",
+    "prompt_3": "cel_shading, (cel_shading_style:1.4), worst quality, low quality, bad anatomy"
+  },
+  "tag_queries": []
+}
+
+**示例 4：视角切换（转背影）**
+User Intent: "给我看她的背影"
+[wd14] tags: 1girl, solo, looking at viewer, front view, red dress, holding umbrella, rain
+
+Assistant Output:
+{
+  "args": {
+    "prompt_2": "A split screen image. On the left side, a front view of a girl in a red dress holding an umbrella in the rain, looking at the viewer. On the right side, the exact same character and outfit are shown, but viewed from directly behind (back view), walking away from the camera through the rain.",
+    "prompt_3": "front_view, looking_at_viewer, face, (front_perspective:1.4), worst quality, low quality, bad anatomy"
+  },
+  "tag_queries": []
+}
+
+**示例 5：常规换装（全局重写）**
+User Intent: "把她的衣服换成厚羽绒服、滑雪镜、冬季裤和厚雪地靴"
+[wd14] tags: 1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors, tree, sunny
+
+Assistant Output:
+{
+  "args": {
+    "prompt_2": "A split screen image. On the left side, the same girl with short hair stands outdoors near a tree on a sunny day, wearing a black t-shirt and blue jeans, as a structural anchor. On the right side, the girl has completely changed and now wears a thick puffy winter jacket, ski goggles, winter pants, and thick snow boots, standing in the same outdoor environment.",
+    "prompt_3": "black_t-shirt, blue_jeans, short_sleeves, summer_clothes, worst quality, low quality, bad anatomy, bad hands"
+  },
+  "tag_queries": []
+}
+
+**示例 6：换角色**
+User Intent: "把这个角色换成初音未来"
+[wd14] tags: 1girl, solo, long hair, school uniform, standing, classroom, blonde hair, green eyes
+
+Assistant Output:
+{
+  "args": {
+    "prompt_2": "A split screen image. On the left side, the same girl with blonde hair and green eyes stands in a classroom wearing a school uniform. On the right side, the character has completely changed and is now Hatsune Miku, with long twintails, turquoise hair, blue eyes, wearing her iconic outfit with white thigh-highs and red shoes, standing in the same classroom.",
+    "prompt_3": "blonde_hair, green_eyes, school_uniform, (original_character:1.4), (blonde:1.3), (green_eyes:1.3), worst quality, low quality, bad anatomy"
+  },
+  "tag_queries": [{"id": "new_character", "group": "character", "keyword": "hatsune miku"}]
+}
+"""
+
+
+EDIT_MODE_JSON_SKELETON = """# 输出格式
+直接输出以下 JSON（字段名不可更改）：
+{
+  "args": {
+    "prompt_2": "A split screen image. On the left side, [原图锚点描述]. On the right side, [根据编辑意图灵活描述右侧新状态].",
+    "prompt_3": "逗号分隔的负向tag（通用质量基准 + 被替换的旧特征 + 身体保护词）"
+  },
+  "tag_queries": [
+    {"id": "角色锚点", "group": "character", "keyword": "如果要求换特定角色，在此填英文名；否则空数组"}
+  ]
+}
+"""
+
+
+EDIT_MODE_TUNE_PARAMS = """## 调参指南（edit 模式）
+
+edit 工作流的关键可调参数：
+
+| 参数 | 默认 | 何时用 | 推荐范围 |
+|------|------|--------|----------|
+| `fls_sharpness` | 0.5 | 边缘/发丝模糊 | 0.7–0.9 |
+| `fls_fovea_strength` | 3.0 | 纹理/质感不足 | 4.0–5.5 |
+| `fls_mask_inertia` | 0.85 | 新旧内容过渡不自然 | 0.7–0.9 |
+| `lllite_strength` | 1.0 | 局部细节控制 | 0.8–1.2 |
+| `teacache_threshold` | 0.15 | 生成速度/质量权衡 | 0.1–0.2 |
+
+args 示例：
+```json
+{
+  "args": {
+    "fls_sharpness": 0.75,
+    "fls_fovea_strength": 4.5,
+    "prompt_3": "white_dress, ribbon, worst quality, low quality, bad anatomy"
+  }
+}
+```
+"""
+
+
+# ──────────────────────────────────────────────────────────────────
+# 动态组装函数
+# ──────────────────────────────────────────────────────────────────
 
 def build_draftsman_prompt(
     nsfw: bool = False, workflow_id: str = "", armor_break_prompt: str = ""
@@ -631,20 +810,14 @@ def build_draftsman_prompt(
     """动态组装出稿 prompt。
 
     模式判断（排除法）：
-    1. 参考图模式：instantref 或 -ref 工作流
-    2. 画师融合模式：artist-mixer 工作流
-    3. 默认模式：所有其他工作流（双 LoRA）
-
-    Args:
-        nsfw: 是否开启 NSFW 模式。
-        workflow_id: 工作流 ID。
-        armor_break_prompt: 破甲提示词(配置注入)。非空时作为**第一步**注入
-            system prompt 最前(位于安全审查之前),用于设定创作基调/解除
-            安全审查的过度拦截;留空则不注入。
+    1. 图片编辑模式：edit 工作流（分屏 prompt + 通用底线规则，跳过创意规则）
+    2. 参考图模式：instantref 或 -ref 工作流
+    3. 画师融合模式：artist-mixer 工作流
+    4. 默认模式：所有其他工作流（双 LoRA，完整三层结构）
     """
     parts = []
 
-    # 0. 破甲提示词(配置注入,最先;设定创作基调,防安全审查过度拦截)
+    # 0. 破甲提示词（最先）
     armor_break_prompt = (armor_break_prompt or "").strip()
     if armor_break_prompt:
         parts.append(armor_break_prompt)
@@ -653,28 +826,127 @@ def build_draftsman_prompt(
     if not nsfw:
         parts.append(SAFETY_PROMPT)
 
-    # 2. 模式注入（参考图模式最优先，改变整个出稿逻辑）
-    if workflow_id and ("instantref" in workflow_id or "-ref" in workflow_id):
+    # 2. 模式注入
+    if workflow_id and "edit" in workflow_id:
+        # edit 模式：全场景指令 + 通用底线规则（跳过创意规则）
+        parts.append(EDIT_MODE_SYSTEM)
+        parts.append(DRAFTSMAN_UNIVERSAL_RULES)  # 底线规则：负向/冲突检查/Tag校验
+        parts.append(EDIT_MODE_TUNE_PARAMS)
+        parts.append(EDIT_MODE_FEW_SHOT)
+        parts.append(EDIT_MODE_JSON_SKELETON)
+        return "\n\n".join(parts)
+
+    # 3. 参考图 / 画师融合 / 普通模式：接通用规则
+    elif workflow_id and ("instantref" in workflow_id or "-ref" in workflow_id):
         parts.append(REF_IMAGE_MODE)
     elif workflow_id and "artist-mixer" in workflow_id:
         parts.append(ARTIST_MIXER_MODE)
-    # 注意：当前所有工作流都带 LoRA，base 模式预留备用
-    # elif workflow_id and "base" in workflow_id:
-    #     parts.append(BASE_MODEL_MODE)
 
-    # 3. 通用出稿规则
-    parts.append(DRAFTSMAN_CORE)
+    # 4. 通用出稿规则
+    parts.append(DRAFTSMAN_CREATIVE_RULES)   # 创意规则：情境/八维/三层/画布
+    parts.append(DRAFTSMAN_UNIVERSAL_RULES)  # 底线规则：负向/冲突检查/Tag校验/画师
 
-    # 4. 精细调参指南（所有工作流可用）
+    # 5. 精细调参指南（参考图/普通模式）
     parts.append(TUNE_PARAMS_GUIDE)
 
-    # 5. 防呆规则
+    # 6. 防呆规则
     parts.append(FAILURE_PATTERNS)
 
-    # 6. 示例
+    # 7. 示例
     parts.append(EXAMPLES)
 
-    # 7. 输出 JSON 骨架
+    # 8. 输出 JSON 骨架
     parts.append(DRAFT_JSON_SKELETON)
 
     return "\n\n".join(parts)
+
+
+def generate_edit_prompts(wd14_tags: str, user_intent: str) -> dict:
+    """为图片编辑模式生成结构化的 positive / negative prompt。
+
+    Args:
+        wd14_tags: WD14 tagger 提取的标签（逗号分隔），如
+            "1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors"
+        user_intent: 用户修改意图，如 "把她的衣服换成厚羽绒服和滑雪镜"
+    Returns:
+        {"messages": [{"role": ..., "content": ...}, ...]}
+    """
+    import json
+
+    system_prompt = """You are an expert prompt engineer for ICLoRAConcat split-screen inpaint editing.
+ICLoRAConcat physically concatenates the reference (left) and generated (right) images,
+so you MUST use strict left-right spatial anchoring for the model to understand the mapping.
+
+RULES:
+1. prompt_2 MUST start with spatial anchoring: "A split screen image. On the left side, [anchor]. On the right side, [new state]."
+2. Adjust the RIGHT side description strategy based on user intent:
+   - Local edit (expression/gesture): "On the right side, the image is exactly the same, but [change]."
+   - Style transfer: "On the right side, the composition remains identical, but rendered in [style]."
+   - View change: "On the right side, the exact same character viewed from [angle]."
+   - Full change (outfit/scene): "On the right side, the [character] has completely changed and now [new state]."
+3. prompt_3: Comma-separated tags. Extract old features from WD14 tags. Always include: worst quality, low quality, bad anatomy, bad hands.
+4. tag_queries: If user asks to change to a specific character, include the character keyword; otherwise empty array.
+5. NEVER write old content in prompt_2 (no "old", "original", "no trace of").
+6. NEVER write natural language in prompt_3 (only comma-separated tags)."""
+
+    few_shot_messages = [
+        {
+            "role": "user",
+            "content": (
+                "WD14 Tags: 1girl, solo, short hair, school uniform, standing, serious, expressionless, classroom\n"
+                "Intent: make her smile happily"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps({
+                "args": {
+                    "prompt_2": "A split screen image. On the left side, a girl with short hair in a school uniform stands in a classroom with a serious, expressionless face. On the right side, the image is exactly the same, but the girl is now smiling brightly and laughing joyfully.",
+                    "prompt_3": "serious, expressionless, blank_stare, worst quality, low quality, bad anatomy, bad hands"
+                },
+                "tag_queries": []
+            }),
+        },
+        {
+            "role": "user",
+            "content": (
+                "WD14 Tags: 1girl, solo, cel_shading, short hair, black dress, sitting, indoors\n"
+                "Intent: convert this image to watercolor painting style"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps({
+                "args": {
+                    "prompt_2": "A split screen image. On the left side, a cel-shaded anime girl with short hair sits indoors wearing a black dress. On the right side, the composition and character remain exactly the same, but the entire image is now rendered in a beautiful traditional watercolor painting style, with soft color bleeding and delicate brush strokes.",
+                    "prompt_3": "cel_shading, (cel_shading_style:1.4), worst quality, low quality, bad anatomy"
+                },
+                "tag_queries": []
+            }),
+        },
+        {
+            "role": "user",
+            "content": (
+                "WD14 Tags: 1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors, tree, sunny\n"
+                "Intent: change her clothes to a heavy winter jacket, ski goggles, winter pants, and thick winter boots"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps({
+                "args": {
+                    "prompt_2": "A split screen image. On the left side, the same girl with short hair stands outdoors near a tree on a sunny day, wearing a black t-shirt and blue jeans, as a structural anchor. On the right side, the girl has completely changed and now wears a thick puffy winter jacket, ski goggles, winter pants, and thick snow boots, standing in the same outdoor environment.",
+                    "prompt_3": "black_t-shirt, blue_jeans, short_sleeves, summer_clothes, worst quality, low quality, bad anatomy, bad hands"
+                },
+                "tag_queries": []
+            }),
+        },
+    ]
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(few_shot_messages)
+    messages.append({
+        "role": "user",
+        "content": f"WD14 Tags: {wd14_tags}\nIntent: {user_intent}"
+    })
+    return {"messages": messages}
