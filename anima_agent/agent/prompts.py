@@ -31,199 +31,6 @@ SAFETY_PROMPT = """# 安全审查（第一步）
 # 2. 模式注入（参考图模式最优先，改变整个出稿逻辑）
 # ──────────────────────────────────────────────────────────────────
 
-# 2a. 参考图模式（-ref / instantref 工作流）
-REF_IMAGE_MODE = """# 【模式】参考图模式 —— IP-Adapter 注入角色特征
-本轮生图使用 IP-Adapter 注入参考图的特征；参考图已自动打标，
-打标结果会作为画面内容的事实依据。
-
-## 核心原则
-- **打标结果 = 事实**：画面内容（角色外观/服装/场景/道具/动作）以打标结果为准。
-  不要编造与打标结果矛盾或打标里不存在的细节。
-- **重点描述**：动作/表情/场景/构图/光线/氛围/视角。
-- **外观细节**：打标结果里有的直接采用；打标里没有的，不强编。
-
-## 画风规则（参考图模式）—— 防画风漂移（画风 = 具体绘制技法，不是笼统描述）
-二次元模型的"画风"是**具体绘制技法**（上色流派/线条处理/光影后期）+ 画师笔触，
-不是笼统的 "anime digital illustration art style" 这类空泛词。
-
-### 画风来源（重要）：[wd14] 段的绘制技法 tag 才是精确画风来源
-Miaoshouai/WD14 tagger 输出里含有精确的绘制技法 tag；**[style] 段（Qwen-VL）只是
-笼统自然语言描述，不可作为精确画风依据**。筛选 [wd14] 技法 tag 时**忽略实体词**
-（衣服/背景/道具），只挑以下几类**绘制技法 (Rendering Techniques)**：
-- 上色流派：`cel_shading`(赛璐璐/平涂)、`impasto`(厚涂)、`watercolor`(水彩质感)、
-  `pastel_colors`(粉彩)、`monochrome`(单色/黑白)
-- 线条处理：`lineart`(纯线稿)、`sketch`(草图质感)、`thick_lines`(粗线条)、
-  `messy_drawing`(凌乱感)
-- 光影与后期：`cinematic_lighting`(电影级光影)、`chromatic_aberration`(色差/边缘红蓝溢色)、
-  `lens_flare`(镜头光晕)、`depth_of_field`(景深虚化)
-
-- **用户没提改画风** → **必须保留参考图画风**：
-  1. 从 [wd14] 段筛出上面的绘制技法 tag，**高权重**写进 hard_tags
-     （如 `(cel_shading:1.3)`、`(lineart:1.2)`、`(cinematic_lighting:1.2)`），
-     并在 nltags_block 写 `keep the reference art style (coloring / lineart / lighting)`。
-     禁止不写技法词——否则模型会用默认画风重塑画面，导致和参考图不像。
-  2. [wd14] 段里的**画师元 tag**（`@wlop`、`@ask`、`drawn by mika pikazo`）→
-     写进 `tag_queries`（group="artist"），由 danbooru tagger 锚定确认后以 @画师 回填。
-- **用户明确指定画风**（"用 wlop 画风"、"厚涂"、"水彩"、"赛璐璐"等）→
-  以用户指定为准，**不抄** [wd14]/[style]，风格词写进 hard_tags/soft_phrases。
-- **用户指定角色名 + 画风**（"画初音未来，用 wlop 画风"）→ 新角色名写
-  tag_queries（见下方换角色规则），画风词直接写进 hard_tags/soft_phrases，
-  两者互不冲突。
-
-## brief.subject 写法
-写「参考图中角色的动作或状态」，而非凭空描述外观：
-- 好："sitting at a cafe table, looking out the window"
-- 好："standing on a hilltop, arms spread wide, wind in hair"
-- 好（基于打标）："a girl with silver hair and blue eyes" ← 打标已确认的真实特征
-
-## hard_tags 写法（参考图模式）
-- 质量前缀（必须的）
-- 打标结果里的真实内容 tag：外观/服装/场景/道具/动作
-- 镜头/氛围 tag：cinematic lighting, dynamic angle, close-up, atmospheric 等
-- **禁止**：编造打标结果里不存在的角色外观/服装细节
-
-## nltags_block 写法（参考图模式）
-专注于 prompt-only 难以生成的关键内容：
-- 光线方向和质感
-- 构图规则（三分法、引导线、负空间、景深）
-- 情绪/氛围渲染
-- 场景空间关系（前后景层次）
-- **禁止**：重复描述角色外观细节
-
-## 最重要规则：禁止角色名 / 人数
-- **禁止一切角色名 tag**："hatsune miku"、"fubuki (one piece)"、"asuka langley" 等。
-  本图角色身份由参考图决定；任何角色名 tag 都会把「那个角色」拉进来，与参考图身份冲突。
-- **禁止人数/多角色 tag**：2girls / 1boy / 3girls / crowd 等一律不写。
-  人数以参考图打标为准（通常是 1girl 或 1boy，照抄即可）。
-- 人物身份特征（发色/瞳色/发型/服装）一律以参考图打标为准。
-- **换角色例外**：用户明确说"换成 X 角色"时，新角色名必须写到 tag_queries：
-  ```
-  tag_queries: [{"id": "target_character", "group": "character", "keyword": "<canonical英文名>"}]
-  ```
-  否则 sanitize 阶段会被当作"LLM 顺手写的其他角色"误剔除，导致图里仍是参考图角色。
-
-## modify with ref_image（修改参考图）—— 重要：tagger 与 LLM 冲突解决规则
-当用户请求修改参考图中某个特征（如"换衣服"、"加眼镜"、"改发型"）时，按以下规则处理
-**（这是当前最容易出错的地方，务必严格遵守）**：
-
-### 维度拆分（先把用户指令拆成独立维度，再逐个决定保留/替换）
-| 维度 | 含义 | 用户没提时 | 用户明确说"换成 X"时 |
-|------|------|------------|---------------------|
-| **角色身份** | 脸/瞳色/发色/发型 | 采用 tagger | 采用 tagger（角色身份不变） |
-| **服装** | 上衣/下装/鞋 | 采用 tagger | 替换为用户指定，**并把旧衣服写进负面 prompt**（见下方"换装不换人"） |
-| **配饰** | 眼镜/帽子/饰品/武器 | 采用 tagger | 新增或替换 |
-| **动作/姿势** | 站/坐/挥手 | 采用 tagger 或用户 | 采用用户最新描述 |
-| **场景** | 室内/室外/地点 | 采用 tagger | 替换为用户指定 |
-| **镜头/构图** | 特写/全身/俯视 | LLM 自由决定 | LLM 自由决定 |
-
-### 换装不换人（最易翻车）—— 旧衣服只许进负面 prompt，正向一个字都不能有
-用户要求更换服装（"换衣服/换成X衣服/穿X"）时，参考图经 IP-Adapter/InstantReferenceLoRA
-注入的**旧衣服视觉特征仍会残留**在潜空间里，与正向 prompt 里的新衣服"打架"，
-导致两件衣服杂糅在一起。必须做语义+潜空间双重隔离：
-1. **正向 prompt（hard_tags / soft_phrases / nltags_block）里旧衣服相关的一个词都不能出现**。
-   包括：旧衣服名词（green dress / white apron / gloves / boots）、指代词（old outfit /
-   original clothes / the old one）、替换句（"no trace of the original ..." / "the old outfit
-   is completely replaced" / "instead of the old ..."）。CLIP 不理解否定，"old outfit /
-   no trace of the original green dress" 这些 token 会被当成**要生成的内容**拉进潜空间，
-   效果和直接写旧衣服 tag 一样（甚至更糟）。旧衣服词**只能**出现在 `args.prompt_12`（负面）。
-   - 错：nltags_block 写 `the new outfit has no trace of the original green dress, white apron, gloves`
-   - 错：nltags_block 写 `the old outfit is completely replaced by a navy blue school swimsuit`（"old outfit" 也是旧衣服 token）
-   - 对：nltags_block 只写新衣服 `the outfit is a navy blue school swimsuit with a name tag on the chest`
-2. **负面镇压旧衣服**：从 [wd14] 段的服装 tag
-   （如 `sailor_suit, red_skirt`）识别参考图原来的衣服，写进 `args.prompt_12`
-   （负面 prompt），格式 `(旧衣服描述:1.3~1.5)`，让 CFG 排斥力压掉残留的旧衣服特征：
-   - 例：参考图是红色水手服 → prompt_12 追加 `(red sailor suit, original outfit:1.5)`
-   - 例：WD14 有 `white_dress, ribbon`，用户要换成校服 → prompt_12 追加
-     `(white dress, ribbon:1.4)`，hard_tags 写 `school_uniform, pleated_skirt`
-   - 提示词风格可用 `(旧衣服关键词, original clothes:1.4)` 组合
-3. **nltags_block 只描述新衣服本身**：写 `the outfit is <新衣服完整描述>`；不要写任何
-   关于旧衣服/替换关系的句子（"replaced / old / original / no trace of" 全都不出现）。
-4. 用户没提换装 → 不写旧衣服负向，服装照抄 tagger。
-5. **训练层配合（InstantReferenceLoRA）**：换装时**绝不能**把旧衣服写进
-   `args.ref_tag_exclude`（打标悖论：训练时"没打标但画面里有的视觉内容会被烤进角色"，
-   旧衣服进 exclude 就永远脱不下来了）；旧衣服必须留在训练集里由 tagger 详尽打标，
-   让模型解绑"衣服是衣服、人是人"，再用负面 prompt 镇压（详见下方"参考图炼丹"节）。
-
-### hard_tags 与 tagger 冲突时的处理
-**用户明确修改某维度时**：该维度的 tagger tag 必须替换为用户指定的 tag，**不允许保留旧值**。
-- 错：tagger 写了 `white_dress, ribbon`，用户说"换成校服" → hard_tags 仍写 `white_dress, ribbon`
-- 对：tagger 写了 `white_dress, ribbon`，用户说"换成校服" → hard_tags 写 `school_uniform, serafuku, pleated_skirt`
-
-**用户没提的维度**：直接采用 tagger 结果，**不允许凭印象改写**。
-- 错：tagger 写了 `silver_hair, blue_eyes`，LLM 觉得"应该配黑发" → 改成 `black_hair, red_eyes`
-- 对：tagger 写了 `silver_hair, blue_eyes`，LLM 照抄 → `silver_hair, blue_eyes`
-
-### nltags_block 里写「变化 + 保留」
-修改类指令必须在 nltags_block 中**显式声明**：
-- 保留什么：`keep the face and hair, only change the outfit`
-- 改变什么：`the outfit should be a sailor school uniform with a blue ribbon`
-- 重点强调：`the new outfit must be prominent, no traces of the original white dress`
-
-### 反例（最容易翻车的几种）
-1. **过度保守**：用户说"加副眼镜"，LLM 只在 nltags_block 提了一句，hard_tags 里没加 `glasses` → 出图没眼镜
-2. **过度发挥**：用户说"换衣服"，LLM 把发色、瞳色全换了 → 角色不像参考图
-3. **tagger 盲信**：用户说"加配饰"，LLM 只复制 tagger 结果 → 出图没有新配饰
-4. **混淆维度**：用户说"换个场景"，LLM 把服装也换了 → 用户没要求服装变
-5. **换装不镇压**：用户说"换成校服"，LLM 只把正向 prompt 改成校服，prompt_12 里没写旧衣服 → 参考图旧衣服视觉残留和新校服杂糅
-6. **正向列举旧衣服**：用户说"换成水手服"，LLM 在 nltags_block 写 `no trace of the original green dress, white apron, gloves` → 旧衣服 token 进了正向 prompt，被 CLIP 当真生成，新旧衣服杂糅（旧衣服只能写进 prompt_12）
-
-### 判定自检清单（输出 three_layer 前自问）
-1. 用户提到的每个修改点是否都在 hard_tags 有对应 tag？
-2. 没修改的维度是否都保留了 tagger 的 tag？
-3. nltags_block 是否清晰说明了"保留什么 / 改变什么"？
-4. **若是换装：正向 prompt（hard_tags/nltags_block）里有没有出现任何旧衣服词（包括"no trace of the original..."否定式列举）？有 → 删掉；旧衣服只许写进 prompt_12（带 1.3~1.5 权重）**
-5. **ref_tag_exclude 里有没有衣服/动作/背景？有 → 删掉（打标悖论：会被烤进角色，换装脱不下来）；exclude 只放身份特征**
-
-## 参考图炼丹（InstantReferenceLoRA 的 tagging/train 选项）—— 打标悖论与参数调度
-InstantReferenceLoRA 每次生成前会为参考图**临时训练一个微型 LoRA**。工作流里的
-ReferenceTaggingOptions / ReferenceTrainOptions 两个节点控制这次"炼丹"的**数据清洗**
-与**训练强度**，按以下规则输出 args（全部可选；不输出就保持模板默认值）。
-
-### 打标悖论（最重要、最反直觉）—— exclude_tags 怎么用
-- **绝对不能排除衣服/动作/背景**：训练时"画面里出现、但标签里没有的词，模型会默认它是
-  角色肉体的一部分"。把 `white dress` 写进 exclude → 模型看到一大块白色布料却没有标签，
-  会把裙子**烤（Bake）进**角色概念，之后换装永远脱不下来。
-- **排除 = 焊死身份**：exclude_tags 只放想和角色死死绑定、绝不想被替换的**身份特征**：
-  `1girl / solo / looking at viewer / 发色 / 瞳色 / 标志性发型`。排除这些词会让模型把
-  面部/身体特征融合成整体概念，提高角色还原度。
-- **衣服要留在训练集里**：换装时让 tagger 详尽打标旧衣服（训练层解绑"衣服是衣服、人是人"），
-  旧衣服靠负面 prompt 镇压、正向写新衣服（见上方"换装不换人"）。
-
-### args 输出规则（全部可选）
-- `ref_tag_exclude`：要排除的 tag（逗号分隔），**只放身份特征**（见上）。
-- `ref_tag_prepend` / `ref_tag_append`：画风词（cel shading / lineart / 画师名等）。
-  用户没提改画风时，把 [wd14] 技法 tag 填进 `ref_tag_prepend` → 临时 LoRA 自带画风倾向
-  （同时按上方画风规则高权重写进 hard_tags，文本层+训练层双重锁画风）。
-- `ref_tag_general_threshold`（0~1，默认 0.35）/ `ref_tag_character_threshold`（0~1，默认 0.85）：
-  角色首饰/纹理极复杂 → general_threshold 降到 0.25 左右，让 tagger 捕获更多细节词。
-- `ref_train_network_dim`（0=自动）：角色细节极复杂（复杂首饰/刺绣/纹理）→ 64~128，
-  维度越大对细节复刻越强（过大易过拟合）。
-- `ref_train_steps`（0=默认）：用户要求强烈画风转换或原图细节极多 → 150~200。
-
-## 精细调参指南（当出图质量不足时使用）
-注意：当前工作流是 **turbo（anima-turbo-v1.1, steps=8, cfg=1）**：**不要拉高 steps/cfg**
-（过饱和发糊）。下面 fls_cfg 拉高的条目仅适用于非 turbo 场景。
-遇到以下情况可用 `args` 精细干预：
-- **细节不足/纹理发糊**：`fls_sharpness` 提至 0.7–0.9（turbo 保持 cfg≈1）
-- **发丝/配饰边缘模糊**：`fls_sharpness` 提至 0.7–0.9
-- **面部特征过强/衣服走样**：`ip_adapter_strength` 降至 0.6–0.75
-- **IP-Adapter 影响时间过长导致服装/场景被污染**：`ip_adapter_end_at` 降至 0.3–0.4，让 IP-Adapter 尽早退场(默认已 0.45)
-- **参考约束弱(不够像)**：`instantref_model_strength` 提至 1.3–1.5，或 `instantref_start_at` 降到 0.2–0.35 让 InstantRef 更早接管
-- **需要生成复杂服装纹理/装饰但模型倾向简化**：在 `negative_repel` 中追加 `simplified, plain clothes, missing details, blurry`
-- **底层构图正确但高频细节（褶皱/反光/发丝）不够**：`ip_adapter_layer_filter` 和 `fls_layer_filter` 设为 `OUT`（只注入 U-Net 高频层）
-
-args 字段写法示例：
-```json
-"args": {
-  "fls_sharpness": 0.75,
-  "ip_adapter_strength": 0.7,
-  "ip_adapter_end_at": 0.4,
-  "negative_repel": "simplified, plain clothes, missing details"
-}
-```
-"""
-
-
 # 2b. 画师融合模式（artist-mixer 工作流）
 ARTIST_MIXER_MODE = """# 【模式】画师融合模式 —— Artist Mixer
 本轮是画师融合：把多个画师的风格混合进同一张图。
@@ -808,9 +615,7 @@ def build_draftsman_prompt(
         parts.append(EDIT_MODE_JSON_SKELETON)
         return "\n\n".join(parts)
 
-    # 3. 参考图 / 画师融合 / 普通模式：接通用规则
-    elif workflow_id and ("instantref" in workflow_id or "-ref" in workflow_id):
-        parts.append(REF_IMAGE_MODE)
+    # 3. 画师融合 / 普通模式：接通用规则
     elif workflow_id and "artist-mixer" in workflow_id:
         parts.append(ARTIST_MIXER_MODE)
 
@@ -834,92 +639,61 @@ def build_draftsman_prompt(
 
 
 def generate_edit_prompts(wd14_tags: str, user_intent: str) -> dict:
-    """为图片编辑模式生成结构化的 positive / negative prompt（LLM 填空 + Python 组装）。
+    """为图片编辑模式生成结构化的 positive / negative prompt（LLM 动态过滤 + Python 组装）。
 
-    Args:
-        wd14_tags: WD14 tagger 提取的标签（逗号分隔）
-        user_intent: 用户修改意图
-    Returns:
-        {"messages": [{"role": ..., "content": ...}, ...]}
+    DiT 特性: 自然语言空间锚定 + character_dna_tags(角色DNA紧跟空间锚定) +
+    edited_tags(修改特征高权重) + split screen 触发词 + style_modifiers(画风尾缀)。
+    LLM 根据用户意图提取角色 DNA 和修改标签，精准负向镇压旧特征。
     """
     import json
 
     system_prompt = """You are an expert prompt engineer for ICLoRAConcat split-screen inpaint editing.
-LLM ONLY fills visual phrase slots; Python code handles the full prompt assembly.
 
-OUTPUT FORMAT — STRICT RULES
-- Output ONLY a single JSON object. NO prose, NO markdown code fences, NO commentary before or after.
-- Do not wrap the JSON in ``` or any other delimiters.
-- Do not append explanations like "Here is the JSON:" or "Hope this helps".
-- Field names MUST match the schema exactly. Do not invent extra top-level fields.
-
-OUTPUT JSON SCHEMA (field names MUST be exactly as shown):
+OUTPUT JSON SCHEMA:
 {
   "args": {
-    "left_anchor": "A declarative sentence describing the LEFT/original image's visual state. Describe the character, clothing, pose, scene, style etc.",
-    "right_edit": "A declarative sentence describing the RIGHT/new visual state.",
-    "negative_tags": "Comma-separated tags to suppress. Always include: worst quality, low quality. Add old features being replaced."
+    "left_anchor": "A declarative sentence describing the LEFT/original image.",
+    "right_edit": "A declarative sentence describing the RIGHT/new state.",
+    "character_dna_tags": "【ABSOLUTE PRIORITY】Core identity tags ONLY: 1girl, solo, hair_color, eye_color, face_traits. Must be EXTREMELY minimal (3-8 tags max). This is your character's DNA - these must survive any modification.",
+    "edited_tags": "Comma-separated NEW tags representing the user's modifications (e.g., 'winter jacket, ski goggles'). These get automatic weight (1.1) injected by Python.",
+    "negative_tags": "Comma-separated tags to suppress (worst quality + old features being replaced).",
+    "style_modifiers": "Comma-separated tags ONLY for ART STYLE or GLOBAL LIGHTING. Leave empty if none."
   },
-  "tag_queries": [{"id": "...", "group": "character", "keyword": "if changing to a specific character, fill in English name; otherwise empty array"}]
+  "tag_queries": [{"id": "...", "group": "character/artist", "keyword": "..."}]
 }
 
-ASSEMBLY (done by Python, for your reference):
-  final_prompt = <QUALITY_PREFIX + hard_tags from tag service> + soft_phrases + ", split screen, multiple view, A split screen image. On the left side, <left_anchor>. On the right side, <right_edit>."
-
 RULES:
-1. left_anchor: declarative sentence. Describe ONLY the left/original image (character, clothing, pose, scene, style). NO right-side content.
-2. right_edit: declarative sentence. Describe what changes on the right side. NO left-side content.
-   - Character NOT changed (same person): START with "the image is exactly the same, but the [character] is now [change]"
-     Examples: change expression → "the image is exactly the same, but the girl is now smiling brightly"
-                change clothes → "the image is exactly the same, but the girl is now wearing a winter jacket"
-                change held item → "the image is exactly the same, but the character is now holding a bouquet of flowers"
-   - Character changed (different person): "the character has been completely replaced with [new character description]"
-   - Scene changed only: "the scene has changed to [new scene], but the character remains the same"
-   - Style transfer: "the composition remains the same, but rendered in [new art style]"
-3. negative_tags: Comma-separated tags only. NO natural language sentences.
-4. NEVER use negation phrases like "no old", "no longer" — CLIP does not understand negation.
-5. If the user specifies a new character, include a tag_query for that character."""
+1. left_anchor & right_edit: Describe left and right sides in natural language sentences.
+2. character_dna_tags (CRITICAL - ABSOLUTE PRIORITY): Extract ONLY the core character identity tags. Examples: silver_hair, blue_eyes, twin_tails, hair_ornament. MAXIMUM 3-8 tags. NO clothing, NO environment, NO minor objects. This tag group goes first in the final prompt to lock character identity against the reference image. Drop ALL other tags here!
+3. edited_tags: Extract core items the user wants to ADD or CHANGE into discrete tags. Example: if changing clothes → 'winter jacket, ski goggles'; if changing background → 'cyberpunk city, night'. Do NOT include style tags here (those go in style_modifiers). Python wraps these in (tag:1.1) automatically.
+4. negative_tags: MUST include the exact old tags being replaced. Always include: worst quality, low quality.
+5. style_modifiers: Put requested art styles or artists here (e.g., 'watercolor, @ask')."""
 
     few_shot_messages = [
         {
             "role": "user",
-            "content": "WD14 Tags: 1girl, solo, short hair, school uniform, standing, serious, expressionless, classroom\nIntent: make her smile happily",
+            "content": "WD14 Tags: 1girl, solo, silver hair, blue eyes, school uniform, standing, outdoors, tree, sunny\nIntent: change the background to a cyberpunk city street at night",
         },
         {
             "role": "assistant",
             "content": json.dumps(
                 {
                     "args": {
-                        "left_anchor": "a girl with short hair in a school uniform stands in a classroom with a serious, expressionless face",
-                        "right_edit": "the image is exactly the same, but the girl is now smiling brightly and laughing joyfully",
-                        "negative_tags": "serious, expressionless, blank_stare, worst quality, low quality, bad anatomy",
+                        "left_anchor": "a girl with silver hair stands outdoors near a tree wearing a school uniform on a sunny day",
+                        "right_edit": "the character and outfit are exactly the same, but the background has completely changed to a neon-lit cyberpunk city street at night",
+                        "character_dna_tags": "1girl, solo, silver_hair, blue_eyes",
+                        "edited_tags": "cyberpunk city, night, neon lights",
+                        "negative_tags": "outdoors, tree, sunny, day, nature, worst quality, low quality",
+                        "style_modifiers": "cyberpunk style"
                     },
-                    "tag_queries": [],
+                    "tag_queries": []
                 },
                 indent=2,
             ),
         },
         {
             "role": "user",
-            "content": "WD14 Tags: 1girl, solo, cel_shading, short hair, black dress, sitting, indoors\nIntent: convert this image to watercolor painting style",
-        },
-        {
-            "role": "assistant",
-            "content": json.dumps(
-                {
-                    "args": {
-                        "left_anchor": "a cel-shaded anime girl with short hair sits indoors wearing a black dress",
-                        "right_edit": "the composition remains the same, but the entire image is rendered in a beautiful watercolor painting style with soft color bleeding and delicate brush strokes",
-                        "negative_tags": "cel_shading, worst quality, low quality, bad anatomy",
-                    },
-                    "tag_queries": [],
-                },
-                indent=2,
-            ),
-        },
-        {
-            "role": "user",
-            "content": "WD14 Tags: 1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors\nIntent: change her clothes to a heavy winter jacket and ski goggles",
+            "content": "WD14 Tags: 1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors\nIntent: change to winter jacket and ski goggles",
         },
         {
             "role": "assistant",
@@ -927,34 +701,13 @@ RULES:
                 {
                     "args": {
                         "left_anchor": "a girl with short hair stands outdoors wearing a black t-shirt and blue jeans",
-                        "right_edit": "the image is exactly the same, but the girl is now wearing a thick winter jacket and ski goggles in the same outdoor environment",
-                        "negative_tags": "black_t-shirt, blue_jeans, short_sleeves, worst quality, low quality, bad anatomy, bad hands",
+                        "right_edit": "the image is exactly the same, but the girl is now wearing a thick winter jacket and ski goggles",
+                        "character_dna_tags": "1girl, solo, short_hair",
+                        "edited_tags": "winter jacket, ski goggles, thick clothes",
+                        "negative_tags": "black_t-shirt, blue_jeans, short_sleeves, worst quality, low quality",
+                        "style_modifiers": ""
                     },
-                    "tag_queries": [],
-                },
-                indent=2,
-            ),
-        },
-        {
-            "role": "user",
-            "content": "WD14 Tags: 1girl, solo, long hair, school uniform, standing, park\nIntent: replace the character with Hatsune Miku",
-        },
-        {
-            "role": "assistant",
-            "content": json.dumps(
-                {
-                    "args": {
-                        "left_anchor": "a girl with long hair in a school uniform stands in a park",
-                        "right_edit": "the character has been completely replaced with Hatsune Miku, featuring long turquoise twin-tails, blue eyes, and her iconic white thigh-highs outfit with red shoes",
-                        "negative_tags": "long_hair, school_uniform, (original_character:1.4), worst quality, low quality, bad anatomy",
-                    },
-                    "tag_queries": [
-                        {
-                            "id": "hatsune_miku",
-                            "group": "character",
-                            "keyword": "hatsune miku",
-                        }
-                    ],
+                    "tag_queries": []
                 },
                 indent=2,
             ),
@@ -963,9 +716,7 @@ RULES:
 
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(few_shot_messages)
-    messages.append(
-        {"role": "user", "content": f"WD14 Tags: {wd14_tags}\nIntent: {user_intent}"}
-    )
+    messages.append({"role": "user", "content": f"WD14 Tags: {wd14_tags}\nIntent: {user_intent}"})
     return {"messages": messages}
 
 
@@ -977,38 +728,52 @@ RULES:
 def assemble_edit_prompt(
     left_anchor: str,
     right_edit: str,
-    hard_tags: Optional[list[str]] = None,
-    extra_soft_phrases: Optional[list[str]] = None,
+    style_modifiers: str = "",
+    character_dna_tags: str = "",
+    edited_tags: str = "",
 ) -> str:
     """Python-side assembly for edit mode.
 
-    组装顺序（ICLoRAConcat 训练约束）：
-    1. 质量前缀（QUALITY_PREFIX，由 _enforce_quality_floor 注入 hard_tags 头部）
-    2. 左/右图内容 hard_tags（tag 校验回填的 confirmed tags）
-    3. 额外的 soft_phrases（nltags 等）
-    4. `split screen, multiple view` —— ICLoRAConcat 触发词
-    5. `A split screen image. On the left side, <left_anchor>. On the right side, <right_edit>.`
-       —— 模型训练时学习的左右空间定位句式
-
-    Args:
-        left_anchor: 左侧陈述句短语（5-15 词），描述左图视觉状态
-        right_edit: 右侧陈述句短语（5-15 词），描述右图新内容
-        hard_tags: 标签校验回填的 hard tags（不含质量前缀）
-        extra_soft_phrases: 额外的 soft_phrases
+    DiT 特性: split screen 空间触发词(第1优先级对齐构图) + 自然语言锚定 →
+    character_dna_tags(角色DNA紧贴锚定之后，防止DiT在复杂图片下角色失忆) +
+    edited_tags(修改特征高权重) + style_modifiers(画风尾缀)
     """
-    parts: list[str] = []
-    if hard_tags:
-        parts.append(", ".join(t for t in hard_tags if t and t.strip()))
-    if extra_soft_phrases:
-        phrases = [p.strip() for p in extra_soft_phrases if p and p.strip()]
-        if phrases:
-            parts.append(", ".join(phrases))
-    parts.append("split screen, multiple view")
+    parts = []
+
+    # 0. 绝对优先的空间触发词（DiT 最先对齐构图）
+    parts.append("split screen, multiple views")
+
+    # 1. 自然语言空间锚定 — 左右分屏定位
     parts.append(
-        f"A split screen image. On the left side, {left_anchor} "
-        f"On the right side, {right_edit}"
+        f"A split screen image. On the left side, {left_anchor.strip()} "
+        f"On the right side, {right_edit.strip()} "
     )
+
+    # 2. character_dna_tags: 角色 DNA 紧贴空间锚定之后，防止复杂图片下角色失忆
+    if character_dna_tags and character_dna_tags.strip():
+        parts.append(character_dna_tags.strip())
+
+    # 3. edited_tags: 修改特征高权重（Python 自动加权重）
+    if edited_tags and edited_tags.strip():
+        weighted_tags = _wrap_edited_tags(edited_tags.strip())
+        parts.append(weighted_tags)
+
+    # 4. 画风与全局修饰
+    if style_modifiers and style_modifiers.strip():
+        parts.append(style_modifiers.strip())
+
     return ", ".join(parts)
+
+
+def _wrap_edited_tags(tags_str: str) -> str:
+    """将逗号分隔的 tags 批量加上 (tag:1.1) 权重。"""
+    result = []
+    for tag in tags_str.split(","):
+        tag = tag.strip()
+        if tag:
+            # result.append(f"({tag}:1.05)")
+            result.append(tag)
+    return ", ".join(result)
 
 
 def assemble_edit_negative(negative_tags: str) -> str:

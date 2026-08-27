@@ -203,7 +203,6 @@ class AgentPipeline:
         ref_image_filename: Optional[str] = None,
         confirmed_artists: Optional[list[str]] = None,
         ref_tags: Optional[str] = None,
-        qwen_vl_tags: Optional[str] = None,
         character_sheet: Optional[str] = None,
         random_artist_mode: str = "pool",
         random_artist_top_n: int = 100,
@@ -222,11 +221,7 @@ class AgentPipeline:
             confirmed_artists: 标签库确认的画师名列表(小写,去@)。LLM 可能不认识
                 画师名(如「ke-ta」),把它当风格词;这里提供事实,让出稿层正确写
                 @画师(单画师)或 artist_chain(融合)。
-            ref_tags: 参考图打标融合文本([wd14] 碎片 + [vlm] 描述两段,来自
-                DualTagger)。注入出稿/意图分类,作为图中真实内容的事实依据。
-            qwen_vl_tags: Qwen-VL 路线的原始自然语言描述(未带 [vlm] 头)。
-                单独传给 _sanitize_ref_character_tags 作角色白名单来源,防止
-                LLM 顺手写别的角色名被误判/漏判。
+            ref_tags: 参考图打标融合文本([wd14] 碎片,来自 DualTagger)。注入出稿/意图分类,作为图中真实内容的事实依据。
         """
         # 最终工作流 ID(含 local/ 前缀,传递给 draftsman 做 prompt 模式判断)
         effective_workflow_id = _effective_workflow_id(
@@ -330,13 +325,14 @@ class AgentPipeline:
             # 白名单来源:tagger 结果 + LLM tag_queries 中的 character 类锚点
             # (用户明确要求"换成 X"时,新角色名在 tag_queries 中已被校验,会保留)
             draft = await self._sanitize_ref_character_tags(
-                draft, effective_workflow_id, ref_tags, qwen_vl_tags
+                draft, effective_workflow_id, ref_tags
             )
 
             # 2.3.1 参考图模式:锚定 WD14 画师元 tag(@wlop / drawn by xxx)
-            # 参考图模式跳过全量 tag 校验,但画师元 tag 仍要经 danbooru tagger 锚定,
-            # 确认后才以 @画师 写进 hard_tags(防 LLM 把画师名当风格词/捏造画师)。
             draft = await self._anchor_ref_artists(draft, effective_workflow_id)
+
+            # 2.3.2 编辑模式:校验 non-artist tag_queries(danbooru 确认)→回填 character_dna_tags
+            draft = await self._validate_edit_tag_queries(draft, effective_workflow_id)
 
             # 2.4 兜底:LLM 把 random 判成 intent=random 但没写画师 → 补一个随机画师
             draft = await self._apply_random_artist(draft)
@@ -348,7 +344,7 @@ class AgentPipeline:
             # 普通模式:重新组装 prompt_11
             is_edit_workflow = bool(effective_workflow_id) and "edit" in effective_workflow_id
             if is_edit_workflow:
-                # soft_phrases[0]=left_anchor (左图陈述句短语), soft_phrases[1]=right_edit (右图新内容短语)
+                # soft_phrases[0]=left_anchor, soft_phrases[1]=right_edit
                 soft = list(draft.three_layer.soft_phrases or [])
                 left_anchor = soft[0] if len(soft) >= 1 else ""
                 right_edit = soft[1] if len(soft) >= 2 else ""
@@ -359,19 +355,32 @@ class AgentPipeline:
                     left_anchor = left_anchor or fallback["left_anchor"]
                     right_edit = right_edit or fallback["right_edit"]
 
-                # hard_tags 已被 _enforce_quality_floor 补齐 QUALITY_PREFIX 在头部
-                # 仍属于"内容 tag"的部分直接复用
-                hard_tags = list(draft.three_layer.hard_tags or [])
+                # three_layer.hard_tags 已由 _enforce_quality_floor 注入质量前缀+安全标签
+                quality_prefix_parts = draft.three_layer.hard_tags or []
 
-                # 其余 soft_phrases（>=3 元素）作为额外短语
-                extra_soft = soft[2:] if len(soft) > 2 else []
+                # character_dna_tags: LLM 提纯的角色 DNA 标签（发色/瞳色/面部特征）
+                character_dna_tags_str = getattr(draft.args, "character_dna_tags", "") or ""
 
-                draft.args.prompt_2 = assemble_edit_prompt(
+                # edited_tags: LLM 提取的新增/修改离散 tag（Python 端自动加权重）
+                edited_tags_str = getattr(draft.args, "edited_tags", "") or ""
+
+                # style_modifiers: 画风/画师/全局光影尾缀
+                style_modifiers = getattr(draft.args, "style_modifiers", "") or ""
+
+                from anima_agent.agent.prompts import assemble_edit_prompt
+
+                prompt_2 = assemble_edit_prompt(
                     left_anchor=left_anchor,
                     right_edit=right_edit,
-                    hard_tags=hard_tags,
-                    extra_soft_phrases=extra_soft,
+                    style_modifiers=style_modifiers,
+                    character_dna_tags=character_dna_tags_str,
+                    edited_tags=edited_tags_str,
                 )
+                # 前置质量前缀 + 安全标签（nsfw/safe），让 DiT 全局权重生效
+                if quality_prefix_parts:
+                    prompt_2 = ", ".join(quality_prefix_parts) + ", " + prompt_2
+
+                draft.args.prompt_2 = prompt_2
                 draft.args.prompt_3 = assemble_edit_negative(draft.args.negative_tags or "")
                 # prompt_11/12 供 schema_injector 兼容(edit 模式用 prompt_2/3)
                 draft.args.prompt_11 = draft.args.prompt_2
@@ -388,7 +397,9 @@ class AgentPipeline:
 
             # 4. 自审:代码化硬约束
             t3 = time.monotonic()
-            review = self.programmatic_reviewer.review(draft.args, draft.three_layer, draft.brief)
+            review = self.programmatic_reviewer.review(
+                draft.args, draft.three_layer, draft.brief, edit_mode=is_edit_workflow
+            )
             t_stage["自审"] = time.monotonic() - t3
             if not review.passed:
                 last_review = review
@@ -670,7 +681,6 @@ class AgentPipeline:
         draft: DraftResult,
         workflow_id: str,
         ref_tags: Optional[str],
-        qwen_vl_tags: Optional[str] = None,
         user_prompt: Optional[str] = None,
     ) -> DraftResult:
         """参考图模式剔除「LLM 顺手写的其他角色」。
@@ -683,25 +693,19 @@ class AgentPipeline:
         - 是角色 + 不在白名单 → 剔除(防 LLM 顺手写"hatsune miku"污染参考图身份)
         - 不是角色 → 保留(LLM 可自由修改该维度)
 
-        白名单来源(参考图打标 / LLM tag_queries / character_sheet):
-        1. tagger 输出里出现过的词 → 视为「参考图自己的内容」。两路都算:
-           ref_tags(融合文本,含 [wd14] 碎片)与 qwen_vl_tags(Qwen-VL 原始
-           自然语言描述)。VLM 描述里若点名了角色(如 "This is Hatsune Miku"),
-           对应词也会进白名单,不会被误剔。
+        白名单来源:
+        1. tagger 输出里出现过的词(WD14 碎片)→ 视为「参考图自己的内容」。
+           拆词:只拆 ≥3 字符的词,避免短词误碰;
+           underscore 与空格互相归一("silver_hair" ↔ "silver hair"),
+           让 tag 碎片能互相命中。
         2. LLM tag_queries 中声明的 character 锚点 → 视为「用户明确要求的角色」
            (用户说"换成 X 角色"时,LLM 必须把 X 写进 tag_queries,否则会被误剔除)
-        3. 拆词:只拆 ≥3 字符的词,避免 "reimu" 这种短词与 ref_set 误碰;
-           underscore 与空格互相归一("silver_hair" ↔ "silver hair"),
-           让 tag 碎片与 VLM 自然语言能互相命中。
         """
         if not workflow_id or not ("-ref" in workflow_id or "instantref" in workflow_id or "edit" in workflow_id):
             return draft
 
-        # 1. tagger 白名单:WD14 碎片 + Qwen-VL 自然语言描述(两路都算参考图自己的内容)
+        # 1. tagger 白名单:WD14 碎片
         ref_tokens, ref_words = _ref_whitelist(ref_tags)
-        qv_tokens, qv_words = _ref_whitelist(qwen_vl_tags)
-        ref_set = ref_tokens | qv_tokens
-        ref_words |= qv_words
 
         # 2. character 锚点白名单:LLM 在 tag_queries 中声明的 character 关键词
         target_chars: set[str] = set()
@@ -726,11 +730,11 @@ class AgentPipeline:
             bl = bare.lower()
             bl_space = bl.replace("_", " ")
             if (
-                bl in ref_set or bl_space in ref_set
+                bl in ref_tokens or bl_space in ref_tokens
                 or bl in target_chars or bl_space in target_chars
                 or _words_covered(bl, ref_words)
             ):
-                kept.append(token)  # 白名单内保留(词覆盖:VLM 长句里点名也算)
+                kept.append(token)  # 白名单内保留(词覆盖:多词短语全命中也算)
                 continue
             # 不在白名单:仅查 characters 识别 token 是否是角色 tag
             try:
@@ -798,6 +802,54 @@ class AgentPipeline:
                         [r.confirmed_tags[0].to_prompt() for q in queries
                          for r in [batch.results.get(q.id)] if r and r.confirmed_tags])
             draft.three_layer.hard_tags = hard_tags
+        return draft
+
+    async def _validate_edit_tag_queries(
+        self, draft: DraftResult, workflow_id: str
+    ) -> DraftResult:
+        """编辑模式:校验 non-artist tag_queries(danbooru 确认)→回填到 character_dna_tags。
+
+        参考图模式跳过全量 tag 校验(防破坏换装/加配饰等修改指令)，
+        但 user 指定的角色/系列名仍需经 danbooru-tag 确认定义后写入 prompt，
+        确保离散标签被文本编码器正确识别。
+        """
+        if not workflow_id or not ("-ref" in workflow_id or "instantref" in workflow_id or "edit" in workflow_id):
+            return draft
+
+        queries = [
+            q for q in (draft.tag_queries or [])
+            if isinstance(q, dict)
+            and (q.get("group") or "").lower() not in ("artist", "artists")
+            and (q.get("keyword") or q.get("prefix") or "").strip()
+        ]
+        if not queries:
+            return draft
+
+        query_objs = [TagQuery(**q) for q in queries]
+        try:
+            batch = await self.tags.validate_batch(query_objs)
+        except Exception as e:
+            logger.warning("编辑模式 tag_queries 校验失败(跳过): %s", str(e)[:200])
+            return draft
+
+        # 收集 confirmed tags 作为逗号分隔字符串
+        confirmed: list[str] = []
+        for q in query_objs:
+            res = batch.results.get(q.id)
+            if res and res.confirmed_tags:
+                for ct in res.confirmed_tags:
+                    # to_prompt(): artist → @name; character → raw name
+                    tag = ct.to_prompt().lstrip("@") if q.group.lower() == "character" else ct.tag.lstrip("@")
+                    confirmed.append(tag)
+
+        if confirmed:
+            # 合并到 args.character_dna_tags（LLM 已填充的角色 DNA 标签）
+            existing = getattr(draft.args, "character_dna_tags", "") or ""
+            if existing.strip():
+                draft.args.character_dna_tags = existing + ", " + ", ".join(confirmed)
+            else:
+                draft.args.character_dna_tags = ", ".join(confirmed)
+            logger.info("[ref] 编辑模式 tag_queries confirmed: %s", confirmed)
         return draft
 
     async def _object_info(self) -> dict:
@@ -1219,12 +1271,11 @@ def _strip_weight_suffix(token: str) -> str:
 
 
 def _ref_whitelist(text: Optional[str]) -> tuple[set[str], set[str]]:
-    """把打标输出拆成白名单 (tokens, words)(兼容 WD14 tag 碎片与 VLM 自然语言)。
+    """把打标输出拆成白名单 (tokens, words)(WD14 tag 碎片)。
 
     - tokens:逗号分段(整段)+ 段内 ≥3 字符的词;underscore ↔ 空格归一
       ("silver_hair" 与 "silver hair" 互相命中)。
-    - words:全部 ≥3 字符的词(去标点),供 VLM 长句点名场景做词覆盖匹配
-      (如 "This is Hatsune Miku" → "hatsune miku" 由词覆盖命中)。
+    - words:全部 ≥3 字符的词(去标点),供多词短语覆盖匹配。
     """
     tokens: set[str] = set()
     words: set[str] = set()

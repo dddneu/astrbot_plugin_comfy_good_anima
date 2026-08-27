@@ -1,40 +1,15 @@
-"""参考图自动打标:Miaoshouai_Tagger + 大模型视觉打标(主路)→ 融合 captions。
+"""参考图自动打标:Miaoshouai_Tagger + WD14 tag 碎片融合。
 
 用途:用户在消息里附带参考图时,先跑一次打标,把图中真实内容(角色/服装/
 场景/道具等 tag)喂给 LLM,避免 LLM 看不到图而乱编 prompt(参考图模式的
 核心缺陷)。打标在「意图识别之前」执行,结果同时注入意图分类与出稿。
 
-**双路打标**:Miaoshouai_Tagger(W14 tag 碎片,精确标签专用)+ **AstrBot 大模型视觉打标**
-(结构化 JSON,替代 Qwen-VL:身材/五官 + 画风)。两路并联运行(上传一次图片),
-结果融合为结构化 ref_tags 同时喂给 LLM:
+**单路打标**:Miaoshouai_Tagger(WD14 tag 碎片,精确标签专用)。不再使用
+Qwen-VL(大模型视觉打标已替代其身材/五官+画风任务,WD14 负责全部精确 tag)。
 - [wd14] 段:精确语义锚点(颜色/道具/数量/画师/服装/发型/绘制技法),供 LLM 精确引用。
-  **只来自 Miaoshouai(WD14)——专门为此训练的标签器,比 LLM 生成的 danbooru tag 准**。
-- [vlm] 段:身材/五官自然语言描述(体型/比例/脸型/眼/鼻/嘴),对身材漂移问题
-  改善明显,出稿时优先采用。主路来自大模型(视觉),回退路来自 Qwen3-VL。
-- [style] 段:画风关键词(艺术风格/上色/线条/光影/材质),用户没要求改画风时
-  LLM 必须保留,防参考图前后画风漂移。
+  来自 Miaoshouai(WD14)——专门为此训练的标签器,比 LLM 生成的 danbooru tag 准。
 - 换装时的服装隔离(旧衣服不进正向、写进负面镇压)由大模型(draftsman)在
   出稿时完成,见 REF_IMAGE_MODE「换装不换人」。
-
-**主路:大模型视觉打标(LLM_TAG_*)**:4B Qwen-VL 打标不稳定(实测组合任务/特定
-图片会空输出 3/3),改为用 AstrBot 聊天模型(AstrBot 视觉接口)看图,输出
-结构化 JSON(description 身材/五官 + style 画风),**只替代 Qwen-VL 两路,
-不碰精确 tag**。大模型没有识别接口或拒绝了图片识别(回调抛异常/空输出/
-非 JSON)→ **回退 Qwen-VL**(4B 两次单用途调用:一次身材/五官、一次画风)。
-
-实现要点:
-- 工作流模板在 workflows/tagger-miaoshouai/ 和 workflows/tagger-qwenvl/,
-  API 格式,LoadImage 用 __REF_IMAGE__ 占位符(与 *-ref 生成工作流同一套
-  注入机制)。
-- 节点输入**不硬编码**:运行时从 /object_info 读取各节点 required 字段,
-  按默认值/枚举首值/覆盖值填充,任何版本、任何字段名都能提交成功。
-- **文本读取不依赖中间节点事件**:ComfyUI 只给 OUTPUT_NODE 发 executed
-  事件(Miaoshouai_Tagger / TextGenerate 都不是输出节点)。因此工作流以
-  「文本输出节点」收尾(核心 PreviewText,或 ShowText|pythongosssss),
-  从该输出节点的 executed 事件取文本;事件缺失时轮询 /history 兜底。
-- **失败策略(需求确认)**:大模型不可用/失败 → 回退 Qwen-VL;Qwen-VL 也失败
-  → 整个 tagger 流程失败(VLM 描述是关键增量,无法降级到 miaoshouai only);
-  Miaoshouai 路径失败 → 降级为 vlm-only 结果(WD14 碎片只是补充,丢失不阻断)。
 """
 
 from __future__ import annotations
@@ -926,34 +901,10 @@ class RefImageTagger:
 
 
 class DualTagger:
-    """参考图双路打标(并联):Miaoshouai_Tagger(WD14 碎片)+ 大模型视觉打标。
+    """参考图单路打标:Miaoshouai_Tagger(WD14 碎片)。
 
-    单路 RefImageTagger 只有 WD14 碎片 tag(tall / long_legs / skirt),对文本
-    编码器控制弱;**大模型(主路)直接输出「身材高挑、约八头身、脸型圆润、蓝瞳」
-    这类自然语言 + 画风关键词**(结构化 JSON),对身材漂移问题改善明显。
-    精确 tag 仍由 Miaoshouai 打标(WD14 是专用标签器,比 LLM 生成的 danbooru
-    tag 准)——大模型**只替代 Qwen-VL 的「身材/五官 + 画风」两路**。两路并联,
-    结果融合([wd14]+[vlm]+[style] 三段)后喂给 LLM。
-
-    大模型不可用/失败(无视觉接口、拒绝识别、空输出、非 JSON、超时)→
-    **回退 Qwen3-VL**(4B,两次单用途调用:身材/五官 + 画风)。
-
-    与单路的差异:
-    - 图片只上传一次,两路复用同一 filename(省一次上传)。
-    - 两路并行提交/等待(ComfyUI 队列本身串行执行,总耗时 ≈ 两路执行之和,
-      但提交/等待阶段并行,不叠加往返开销)。
-    - **失败策略(需求确认)**:大模型失败 → 回退 Qwen-VL;Qwen-VL 也失败 →
-      整体失败(VLM 描述是关键增量,无法降级到 miaoshouai only);Miaoshouai
-      路径失败 → 降级为 vlm-only 结果(WD14 碎片只是补充,丢失不阻断)。
-
-    Args:
-        client: ComfyUIClient。
-        timeout: Miaoshouai 路超时(默认 DEFAULT_TIMEOUT)。
-        qwenvl_timeout: Qwen-VL 路超时。VLM 首加载慢(4B int8 模型),
-            默认 QWENVL_TIMEOUT(300s),可按机器调。
-        llm_vision_complete: AstrBot 大模型视觉回调 (system, user, image_urls)
-            -> str(可 async)。None=未配置(直接走 Qwen-VL)。
-        llm_timeout: 大模型打标单次调用超时(默认 LLM_TAG_TIMEOUT)。
+    Qwen-VL 已禁用;精确 tag 由 Miaoshouai 提供(专用标签器,比 LLM 更准),
+    身材/五官与画风由大模型(draftsman)在出稿时自行处理。
     """
 
     def __init__(
@@ -965,78 +916,32 @@ class DualTagger:
         llm_timeout: float = LLM_TAG_TIMEOUT,
     ):
         self.client = client
-        self._llm_vision = llm_vision_complete
-        self.llm_timeout = llm_timeout
         self._miaoshouai = RefImageTagger(client, TAGGER_WORKFLOW_ID, timeout=timeout)
-        self._qwenvl = RefImageTagger(client, QWENVL_WORKFLOW_ID, timeout=qwenvl_timeout)
 
     async def run(self, image_bytes: bytes, filename: Optional[str] = None) -> DualTaggerResult:
-        """并联跑 Miaoshouai + 大模型(主路),大模型失败回退 Qwen-VL。
-
-        返回融合结果([wd14] + [vlm] + [style] 三段)。
+        """跑 Miaoshouai 打标,返回 [wd14] 段。
 
         Raises:
-            ComfyUIError / TimeoutError:大模型失败且 Qwen-VL 也失败 → 整体失败
-            (VLM 描述不可降级),异常消息带失败详情。
+            ComfyUIError / TimeoutError:Miaoshouai 路径失败 → 异常。
         """
         await self.client.start()
         if filename is None:
             filename = await self.client.upload_image(image_bytes)
-        # 两路共享一次 /object_info(分别拉取会多一次往返)
         info = await self.client.object_info()
         self._miaoshouai._object_info = info
-        self._qwenvl._object_info = info
 
         t0 = time.monotonic()
-        miao_fut = asyncio.create_task(self._miaoshouai.run(image_bytes, filename))
-
-        # 主路:大模型视觉打标(与 Miaoshouai 并行);失败 → 回退 Qwen-VL
-        # 大模型只替代 Qwen-VL 的「身材/五官 + 画风」两路,不产出精确 tag——
-        # [wd14] 槽位始终是 Miaoshouai 的 WD14 碎片(专用打标器,比 LLM 更准)。
-        llm_tags: Optional[tuple[str, str]] = None
-        if self._llm_vision is not None:
-            try:
-                llm_tags = await llm_tag_image(self._llm_vision, image_bytes, timeout=self.llm_timeout)
-            except Exception as e:
-                logger.warning("大模型打标失败,回退 Qwen-VL: %r", e)
-        if llm_tags is not None:
-            qv_tags, style_tags = llm_tags
-            lane = "llm"
-        else:
-            try:
-                qv_res = await self._qwenvl.run(image_bytes, filename)
-            except BaseException as e:
-                # 清理仍在跑的 Miaoshouai 任务,再抛(保持原失败语义:
-                # Qwen-VL 是关键增量,不可降级到 miaoshouai only)
-                if not miao_fut.done():
-                    miao_fut.cancel()
-                try:
-                    await miao_fut
-                except BaseException:
-                    pass
-                raise ComfyUIError(
-                    f"参考图双路打标失败(Qwen-VL 路径失败,不可降级到 miaoshouai only): "
-                    f"{type(e).__name__}: {e}"
-                ) from (e if isinstance(e, Exception) else None)
-            qv_tags, style_tags = qv_res.tags, qv_res.style_tags
-            lane = "qwenvl"
-
-        miao_tags = ""
-        try:
-            miao_res = await miao_fut
-            miao_tags = miao_res.tags
-        except BaseException as e:
-            logger.warning("Miaoshouai 路径失败,降级为单路结果: %r", e)
+        miao_res = await self._miaoshouai.run(image_bytes, filename)
 
         result = DualTaggerResult(
-            miaoshouai_tags=miao_tags,
-            qwen_vl_tags=qv_tags,
-            style_tags=style_tags,
+            miaoshouai_tags=miao_res.tags,
+            qwen_vl_tags="",
+            style_tags="",
             filename=filename,
         )
         logger.info(
-            "DualTagger 融合完成 耗时=%.2fs lane=%s miaoshouai=%d字符 vlm=%d字符 style=%d字符",
-            time.monotonic() - t0, lane, len(miao_tags), len(qv_tags), len(style_tags),
+            "DualTagger(Miaoshouai only) 完成 耗时=%.2fs miaoshouai=%d字符",
+            time.monotonic() - t0, len(miao_res.tags),
         )
         return result
 

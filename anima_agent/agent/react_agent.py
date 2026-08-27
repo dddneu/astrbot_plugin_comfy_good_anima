@@ -16,7 +16,10 @@ from typing import Callable, Optional
 from anima_agent.agent.compat import maybe_await
 from anima_agent.agent.draftsman import DraftResult
 from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
-from anima_agent.agent.prompts import build_draftsman_prompt, DRAFT_JSON_SKELETON
+from anima_agent.agent.prompts import (
+    build_draftsman_prompt,
+    DRAFT_JSON_SKELETON,
+)
 from anima_agent.agent.utils import extract_json
 from pydantic import ValidationError
 
@@ -27,6 +30,7 @@ MAX_PARSE_RETRIES = 2
 
 class SafetyReject(Exception):
     """安全审查拒绝:LLM 输出了 reject,直接终止出稿不 retry。"""
+
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(f"[安全审查拒绝] {reason}")
@@ -38,18 +42,28 @@ TUNE_PARAMS: dict[str, tuple] = {
     "fls_sharpness": (0.0, 3.0, 0.5, "float"),
     "fls_fovea_strength": (0.0, 6.0, 3.0, "float"),
     "fls_mask_inertia": (0.0, 1.0, 0.85, "float"),
-    "fls_cfg": (1.0, 12.0, 4.5, "float"),     # 细节不足时拉高至 6.0-7.5
+    "fls_cfg": (1.0, 12.0, 4.5, "float"),  # 细节不足时拉高至 6.0-7.5
     "fls_layer_filter": ("", "OUT", "", "str"),  # OUT=锁定高层高频层
     "fls_step_decay": (0.0, 1.0, 0.0, "float"),
     # IP-Adapter 参数(仅 *-ref 和 instantref-ipadapter 工作流)
-    "ip_adapter_strength": (0.0, 2.0, 1.0, "float"),  # 面部过强/衣服走样 → 降至 0.6-0.75
+    "ip_adapter_strength": (
+        0.0,
+        2.0,
+        1.0,
+        "float",
+    ),  # 面部过强/衣服走样 → 降至 0.6-0.75
     "ip_adapter_ref_image_size": (256, 1024, 512, "int"),
     "ip_adapter_siglip_layer": (-8, 0, -1, "int"),
     "ip_adapter_ip_cfg_scale": (0.0, 10.0, 4.0, "float"),
     "ip_adapter_ip_cfg_separate": (0, 1, 0, "bool"),
     "ip_adapter_use_lora": (0, 1, 1, "bool"),
     "ip_adapter_start_at": (0.0, 1.0, 0.0, "float"),
-    "ip_adapter_end_at": (0.0, 1.0, 0.45, "float"),  # 降低让 IP-Adapter 尽早退场(默认 0.45)
+    "ip_adapter_end_at": (
+        0.0,
+        1.0,
+        0.45,
+        "float",
+    ),  # 降低让 IP-Adapter 尽早退场(默认 0.45)
     "ip_adapter_layer_filter": ("", "OUT", "", "str"),
     # 画师融合参数(仅 artist-mixer 工作流)
     "artist_ema_alpha": (0.0, 1.0, 0.0, "float"),
@@ -63,10 +77,30 @@ TUNE_PARAMS: dict[str, tuple] = {
     "instantref_end_at": (0.0, 1.0, 1.0, "float"),
     "instantref_layer_filter": ("", "OUT", "", "str"),
     # 参考图炼丹参数(仅 instantref 工作流;ReferenceTaggingOptions/ReferenceTrainOptions)
-    "ref_tag_general_threshold": (0.0, 1.0, 0.35, "float"),   # tagger 通用阈值,细节极复杂 → 0.25
-    "ref_tag_character_threshold": (0.0, 1.0, 0.85, "float"),  # tagger 角色阈值
-    "ref_train_network_dim": (0, 256, 0, "int"),   # 训练网络维度/rank,0=自动;复杂角色 → 64~128
-    "ref_train_steps": (0, 1000, 0, "int"),        # 训练步数,0=默认;强烈画风转换/细节极多 → 150~200
+    "ref_tag_general_threshold": (
+        0.0,
+        1.0,
+        0.35,
+        "float",
+    ),  # tagger 通用阈值,细节极复杂 → 0.25
+    "ref_tag_character_threshold": (
+        0.0,
+        1.0,
+        0.85,
+        "float",
+    ),  # tagger 角色阈值
+    "ref_train_network_dim": (
+        0,
+        256,
+        0,
+        "int",
+    ),  # 训练网络维度/rank,0=自动;复杂角色 → 64~128
+    "ref_train_steps": (
+        0,
+        1000,
+        0,
+        "int",
+    ),  # 训练步数,0=默认;强烈画风转换/细节极多 → 150~200
 }
 
 TUNE_PARAM_SCOPE = {
@@ -138,9 +172,13 @@ class SimpleAgent:
         """
         try:
             return await self._draft_impl(
-                user_prompt, session_context=session_context, nsfw=nsfw,
-                workflow_id=workflow_id, confirmed_artists=confirmed_artists,
-                ref_tags=ref_tags, character_sheet=character_sheet,
+                user_prompt,
+                session_context=session_context,
+                nsfw=nsfw,
+                workflow_id=workflow_id,
+                confirmed_artists=confirmed_artists,
+                ref_tags=ref_tags,
+                character_sheet=character_sheet,
             )
         except SafetyReject as e:
             raise  # 穿透到 pipeline 层处理
@@ -176,8 +214,14 @@ class SimpleAgent:
 
         # 构建用户消息
         user_msg = self._build_user_message(
-            user_prompt, session_context, confirmed_artists, ref_tags,
-            character_sheet, "", confirmed_en_tags, nltags,
+            user_prompt,
+            session_context,
+            confirmed_artists,
+            ref_tags,
+            character_sheet,
+            "",
+            confirmed_en_tags,
+            nltags,
         )
 
         # 一次性出稿，最多重试 2 次
@@ -211,7 +255,9 @@ class SimpleAgent:
             except (ValueError, KeyError, TypeError, ValidationError) as e:
                 last_err = e
                 logger.warning(
-                    "simple agent attempt %d parse failed: %s", attempt, str(e)[:200]
+                    "simple agent attempt %d parse failed: %s",
+                    attempt,
+                    str(e)[:200],
                 )
         raise ValueError(
             f"simple agent 重试 {MAX_PARSE_RETRIES} 次后仍无法解析 LLM 输出: {last_err}"
@@ -233,15 +279,7 @@ class SimpleAgent:
             parts.append(
                 "参考图已自动打标(以下是图中真实内容的事实依据,出稿时采用,不要编造与它矛盾的内容):\n"
                 f"{ref_tags}\n"
-                "来源说明:[wd14] 是精确 tag 碎片(颜色/道具/数量/服装/**绘制技法 tag**/"
-                "画师元 tag),"
-                "[vlm] 是 Qwen3-VL 自然语言描述(身材/比例/五官,不含服装/发型——"
-                "那些由 [wd14] 打标,"
-                "若无 [style] 段,画风关键词可能混在 [vlm] 文本里,自行提取),"
-                "身材/五官细节优先采用 [vlm],服装/发型/画风以 [wd14] 为准;"
-                "[style] 是 Qwen-VL 的笼统画风描述(存在时)——精确画风以 [wd14] 的绘制技法"
-                "tag 为准(cel_shading/lineart/cinematic_lighting/depth_of_field 等,"
-                "忽略衣服/背景等实体词),用户没要求改画风时必须以技法 tag 高权重保留画风。\n"
+                "来源说明:[wd14] 是 WD14 精确 tag 碎片(颜色/道具/数量/服装/发型/绘制技法/画师元 tag),出稿时以此为事实依据。\n"
                 "[wd14] 里的画师元 tag(如 @wlop / drawn by xxx)必须写进 tag_queries"
                 "(group='artist'),由 danbooru tagger 锚定确认。\n"
                 "⚠️ 处理用户修改指令时(如换装/加配饰/改发型):\n"
@@ -286,7 +324,9 @@ class SimpleAgent:
 
         parts.append(f"用户请求:\n{user_prompt}")
         if session_context:
-            parts.append(f"\n上一轮上下文(用于修改意图,做局部替换):\n{session_context}")
+            parts.append(
+                f"\n上一轮上下文(用于修改意图,做局部替换):\n{session_context}"
+            )
         if confirmed_artists:
             parts.append(
                 "\n标签库已确认以下名字是真实存在的 Danbooru 画师(artist):\n"
@@ -313,7 +353,9 @@ class SimpleAgent:
             raise SafetyReject(data.get("reject_reason", "内容不符合安全规范"))
 
         brief = VisualBrief(**self._coerce_brief(data.get("brief")))
-        three = ThreeLayerPrompt(**self._coerce_three_layer(data.get("three_layer")))
+        three = ThreeLayerPrompt(
+            **self._coerce_three_layer(data.get("three_layer"))
+        )
 
         args_data = dict(data.get("args") or {})
 
@@ -366,7 +408,11 @@ class SimpleAgent:
                     f"{list(data.keys())}"
                 )
         else:
-            if "brief" not in data or "three_layer" not in data or "args" not in data:
+            if (
+                "brief" not in data
+                or "three_layer" not in data
+                or "args" not in data
+            ):
                 raise ValueError(
                     f"normal agent LLM 输出缺少 brief/three_layer/args 字段: "
                     f"{list(data.keys())}"
@@ -436,7 +482,9 @@ class SimpleAgent:
 
         return ", ".join(tag_lines).strip()
 
-    async def _draft_edit_mode(self, wd14_tags: str, user_intent: str) -> DraftResult:
+    async def _draft_edit_mode(
+        self, wd14_tags: str, user_intent: str
+    ) -> DraftResult:
         """Edit 模式出稿:调用 LLM 生成 left_anchor/right_edit/negative_tags。
 
         Edit 模式不走 normal 三层 prompt,直接从 ref_tags 中提取 WD14 tags,
@@ -463,7 +511,7 @@ class SimpleAgent:
                     "Reminder: output ONLY the JSON object matching the schema, "
                     "no prose, no markdown fences, no trailing explanation. "
                     "Field names MUST be exactly: args.left_anchor, args.right_edit, "
-                    "args.negative_tags, tag_queries."
+                    "args.character_dna_tags, args.edited_tags, args.negative_tags, args.style_modifiers, tag_queries."
                 )
             resp = await maybe_await(self.llm_complete(system_prompt, msg))
             try:
@@ -471,18 +519,24 @@ class SimpleAgent:
             except (ValueError, KeyError, TypeError) as e:
                 last_err = e
                 logger.warning(
-                    "edit agent attempt %d parse failed: %s", attempt, str(e)[:200]
+                    "edit agent attempt %d parse failed: %s",
+                    attempt,
+                    str(e)[:200],
                 )
                 continue
 
             args_data = dict(data.get("args") or {})
-            if not args_data.get("right_edit") or not args_data.get("left_anchor"):
+            if not args_data.get("right_edit") or not args_data.get(
+                "left_anchor"
+            ):
                 last_err = ValueError(
                     f"edit agent 缺少必要字段(left_anchor={args_data.get('left_anchor')!r}, "
                     f"right_edit={args_data.get('right_edit')!r})"
                 )
                 logger.warning(
-                    "edit agent attempt %d missing fields: %s", attempt, str(last_err)[:200]
+                    "edit agent attempt %d missing fields: %s",
+                    attempt,
+                    str(last_err)[:200],
                 )
                 continue
 
@@ -490,7 +544,8 @@ class SimpleAgent:
 
         logger.warning(
             "edit agent 重试 %d 次后仍无法解析 LLM 输出,使用回退描述: %s",
-            MAX_PARSE_RETRIES, str(last_err)[:200] if last_err else "unknown",
+            MAX_PARSE_RETRIES,
+            str(last_err)[:200] if last_err else "unknown",
         )
         return self._fallback_edit_draft(wd14_tags, user_intent)
 
@@ -499,23 +554,36 @@ class SimpleAgent:
     ) -> DraftResult:
         """把 edit 模式的 args dict 包装成 DraftResult。
 
-        主动用 assemble_edit_prompt / assemble_edit_negative 把 prompt_2/prompt_3
-        组装出来,顺便镜像一份到 prompt_11/prompt_12(满足 AnimaArgs 必填约束;
-        pipeline 后续还会用 prompt_2 重写 prompt_11,所以这里只是兜底)。
+        DiT 模型特性:纯自然语言空间锚定，无 hard_tags bag-of-words。
+        style_modifiers 用于画风/画师/全局光影的尾缀强调。
+        质量前缀和安全标签(nsfs/safe)由 pipeline._enforce_quality_floor 统一注入。
         """
-        from anima_agent.agent.prompts import assemble_edit_negative, assemble_edit_prompt
-        from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
+        from anima_agent.agent.prompts import (
+            assemble_edit_negative,
+            assemble_edit_prompt,
+        )
+        from anima_agent.agent.schemas import (
+            AnimaArgs,
+            ThreeLayerPrompt,
+            VisualBrief,
+        )
 
         left_anchor = args_data.get("left_anchor") or ""
         right_edit = args_data.get("right_edit") or ""
         negative_tags = args_data.get("negative_tags") or ""
+        style_modifiers = args_data.get("style_modifiers") or ""
+        # character_dna_tags: LLM 提纯的角色 DNA 标签（发色/瞳色/面部特征等核心身份标识）
+        args_data.setdefault("character_dna_tags", "")
+        # edited_tags: LLM 提取的新增/修改离散 tag，Python 端自动加权
+        args_data.setdefault("edited_tags", "")
 
-        # 组装分屏 prompt —— pipeline 后续会用这个重写 args.prompt_2
+        # 组装分屏 prompt —— pipeline 后续会在前面加质量前缀(safe/nsfw)
         assembled_positive = assemble_edit_prompt(
             left_anchor=left_anchor,
             right_edit=right_edit,
-            hard_tags=None,
-            extra_soft_phrases=None,
+            style_modifiers=style_modifiers,
+            character_dna_tags=args_data.get("character_dna_tags") or "",
+            edited_tags=args_data.get("edited_tags") or "",
         )
         assembled_negative = assemble_edit_negative(negative_tags)
 
@@ -565,21 +633,32 @@ class SimpleAgent:
         )
 
     def _fallback_edit_draft(
-        self, wd14_tags: str, user_intent: str, args_data: Optional[dict] = None
+        self,
+        wd14_tags: str,
+        user_intent: str,
+        args_data: Optional[dict] = None,
     ) -> DraftResult:
         """Edit 模式回退:当 LLM 输出缺少必要字段时,从 WD14 tags 提取基本信息。"""
         from anima_agent.agent.prompts import (
             assemble_edit_negative,
             assemble_edit_prompt,
         )
-        from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
+        from anima_agent.agent.schemas import (
+            AnimaArgs,
+            ThreeLayerPrompt,
+            VisualBrief,
+        )
 
         left_anchor = args_data.get("left_anchor") if args_data else ""
         if not left_anchor:
             left_anchor = wd14_tags if wd14_tags else "a character image"
         right_edit = args_data.get("right_edit") if args_data else ""
         if not right_edit:
-            right_edit = f"the image based on: {user_intent}" if user_intent else "a similar image"
+            right_edit = (
+                f"the image based on: {user_intent}"
+                if user_intent
+                else "a similar image"
+            )
         negative_tags = args_data.get("negative_tags") if args_data else ""
         if not negative_tags:
             negative_tags = "worst quality, low quality, bad anatomy"
@@ -608,6 +687,9 @@ class SimpleAgent:
         )
 
         final_args = dict(args_data) if args_data else {}
+        # Fallback: LLM 完全失败时, 把原始 WD14 tags 作为 character_dna_tags(保守策略:保留核心身份)
+        if wd14_tags and not final_args.get("character_dna_tags"):
+            final_args["character_dna_tags"] = wd14_tags
         final_args["prompt_2"] = assembled_positive
         final_args["prompt_3"] = assembled_negative
         # prompt_11/12 是 AnimaArgs 必填;edit 模式实际不用(pipeline 会用 prompt_2/3),
@@ -626,7 +708,8 @@ class SimpleAgent:
 
         logger.info(
             "edit fallback left_anchor=%r right_edit=%r",
-            left_anchor, right_edit,
+            left_anchor,
+            right_edit,
         )
 
         args = AnimaArgs(**final_args)
@@ -666,22 +749,46 @@ class SimpleAgent:
         body = "bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, blurry"
         all_tags = {t.lower() for t in three.hard_tags}
         extra: list[str] = []
-        people = sum(1 for t in ["2girls", "2boys", "3girls", "3boys", "4girls", "4boys", "multiple girls", "multiple boys"] if t in all_tags)
+        people = sum(
+            1
+            for t in [
+                "2girls",
+                "2boys",
+                "3girls",
+                "3boys",
+                "4girls",
+                "4boys",
+                "multiple girls",
+                "multiple boys",
+            ]
+            if t in all_tags
+        )
         if people >= 3:
-            extra.append("duplicate, twins, merged bodies, fused limbs, extra limbs, cloned face, same outfit")
+            extra.append(
+                "duplicate, twins, merged bodies, fused limbs, extra limbs, cloned face, same outfit"
+            )
         elif people >= 2:
             extra.append("merged bodies, extra arms, extra hands, cloned face")
         if any(t in all_tags for t in ["close-up", "close up", "portrait"]):
-            extra.append("bad eyes, asymmetrical eyes, deformed face, blurry face")
+            extra.append(
+                "bad eyes, asymmetrical eyes, deformed face, blurry face"
+            )
         if any(t in all_tags for t in ["full body", "full_body"]):
-            extra.append("extra limbs, missing limbs, disconnected limbs, bad feet")
-        if any(t in all_tags for t in ["from below", "from above", "low angle", "dutch angle"]):
+            extra.append(
+                "extra limbs, missing limbs, disconnected limbs, bad feet"
+            )
+        if any(
+            t in all_tags
+            for t in ["from below", "from above", "low angle", "dutch angle"]
+        ):
             extra.append("distorted face, bad perspective, broken joints")
         return ", ".join([core, body] + extra)
 
     @staticmethod
     def _default_filename_prefix(
-        brief: VisualBrief, three: ThreeLayerPrompt, artist_chain: Optional[str] = None
+        brief: VisualBrief,
+        three: ThreeLayerPrompt,
+        artist_chain: Optional[str] = None,
     ) -> str:
         """LLM 漏 filename_prefix 时,按规则拼。"""
         from datetime import date
@@ -698,7 +805,11 @@ class SimpleAgent:
                 if t.startswith("@"):
                     artist = t.lstrip("@").replace(" ", "_")
                     break
-        subject = brief.subject.replace(" ", "_")[:40] if brief.subject else "unknown"
+        subject = (
+            brief.subject.replace(" ", "_")[:40]
+            if brief.subject
+            else "unknown"
+        )
         return f"anima/{date.today().isoformat()}/anima_base_v1_0-{artist}-{subject}"
 
 

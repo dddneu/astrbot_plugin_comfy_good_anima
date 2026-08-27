@@ -125,17 +125,14 @@ class AnimaAgentPlugin:
                 fixed=固定使用 random_artist_fixed 指定的画师。同时影响 /redraw 行为。
             random_artist_top_n: 池大小(仅 pool 模式)。
             random_artist_fixed: 固定画师英文 tag(仅 fixed 模式,不带 @)。
-            ref_tagger: 参考图打标开关。
+            ref_tagger: 参考图打标开关。仅使用 Miaoshouai(WD14),Qwen-VL 已禁用。
             instantref_params: InstantRef 基线参数(程序化注入/测试用,面板已无此配置;
                 实际调试交给 LLM 经 tune_params 调)。
             reply_with_prompt: 开关。开启后,出图成功回复(「已生成[图片]」)里附带
                 提交给 ComfyUI 的**正向 CLIP prompt**(CLIPTextEncode 正向节点实际收到的
                 文本,取自已提交 payload,截断至 MAX_REPLY_PROMPT_LEN)。
                 用于排查「出图与预期不符」时核对实际提交的 prompt。
-            llm_vision_complete: AstrBot 大模型视觉回调 (system_prompt, user_prompt,
-                image_urls: list[str]) -> str(可 async)。参考图打标**主路**:看图输出
-                结构化 JSON(精确 tag/身材五官/画风),替代不稳定的 4B Qwen-VL;
-                无视觉接口/拒绝识别/空输出 → 自动回退 Qwen-VL。
+            llm_vision_complete: 已废弃,保留参数向后兼容。Qwen-VL 打标已禁用。
             armor_break_prompt: 破甲提示词(配置注入)。非空时作为出稿 system
                 prompt 的**第一步**(位于安全审查之前)注入 LLM,设定创作基调/
                 解除安全审查的过度拦截;留空不注入。
@@ -167,16 +164,14 @@ class AnimaAgentPlugin:
         self.random_artist_top_n: int = max(1, int(random_artist_top_n))
         self.random_artist_fixed: str = (random_artist_fixed or "").strip()
         # 参考图自动打标(意图识别前运行,给 LLM 图中真实内容,防乱编 prompt)
-        # DualTagger 并联 Miaoshouai(WD14 碎片:画风/技法/特征)+ 大模型视觉打标
-        # (主路,结构化 JSON:精确 tag/身材五官/画风;无视觉接口/失败 → 回退 Qwen-VL),
-        # 融合结果喂 LLM,改善 IP-Adapter 切断后的身材漂移问题。
+        # DualTagger 单路 Miaoshouai(WD14 碎片:画风/技法/特征);Qwen-VL 已禁用。
         self.ref_tagger: Optional["DualTagger"] = None
         if ref_tagger:
             try:
                 from anima_agent.comfyui.tagger import DualTagger
 
                 self.ref_tagger = DualTagger(
-                    self.client, llm_vision_complete=llm_vision_complete
+                    self.client
                 )
             except Exception as e:
                 logger.warning("参考图打标器初始化失败(已禁用): %s", e)
@@ -290,19 +285,15 @@ class AnimaAgentPlugin:
 
         # 参考图 → 意图识别前先自动打标(事实依据;打标失败不阻断,降级无 tag)
         ref_tags = ""
-        qwen_vl_tags = ""
         ref_image_filename: Optional[str] = None
         if ref_image and self.ref_tagger is not None:
             t_tag = time.monotonic()
             try:
                 tagger_result = await self.ref_tagger.run(ref_image)
                 ref_tags = tagger_result.fused_tags
-                qwen_vl_tags = tagger_result.qwen_vl_tags
                 ref_image_filename = tagger_result.filename
                 print(
-                    f"[tagger] 双路打标成功(miaoshouai={len(tagger_result.miaoshouai_tags)}字符, "
-                    f"qwen_vl={len(tagger_result.qwen_vl_tags)}字符, "
-                    f"style={len(tagger_result.style_tags)}字符,"
+                    f"[tagger] 打标成功(miaoshouai={len(tagger_result.miaoshouai_tags)}字符,"
                     f"耗时{time.monotonic() - t_tag:.1f}s,已上传 {ref_image_filename}): "
                     f"{ref_tags[:160]}"
                 )
@@ -402,7 +393,6 @@ class AnimaAgentPlugin:
                 ref_image_filename=ref_image_filename,
                 confirmed_artists=confirmed_artists,
                 ref_tags=ref_tags,
-                qwen_vl_tags=qwen_vl_tags,
                 character_sheet=character_sheet,
                 random_artist_mode=self.random_artist_mode,
                 random_artist_top_n=self.random_artist_top_n,

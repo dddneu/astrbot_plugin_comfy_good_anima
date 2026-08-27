@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class VisionNotSupported(Exception):
-    """模型不支持视觉输入,不在 AstrBot Core 层重试,直接回退 Qwen-VL。"""
+    """模型不支持视觉输入(已废弃:Qwen-VL 打标已禁用,不再使用此异常)。"""
     pass
 
 MAX_PROMPT_LEN = 1000  # 生图描述长度上限,防滥用
@@ -450,7 +450,6 @@ class AnimaStar(Star):
             nsfw=bool(config.get("nsfw", False)),
             ref_tagger=bool(config.get("ref_tagger", True)),
             reply_with_prompt=bool(config.get("reply_with_prompt", False)),
-            llm_vision_complete=self._astrbot_llm_vision,
             armor_break_prompt=str(config.get("armor_break_prompt") or ""),
             random_artist_mode=str(config.get("random_artist_mode") or "pool"),
             random_artist_top_n=int(config.get("random_artist_top_n") or 100),
@@ -532,11 +531,9 @@ class AnimaStar(Star):
     def _astrbot_llm_vision(
         self, system_prompt: str, user_prompt: str, image_urls: list[str]
     ):
-        """参考图打标用的视觉 LLM 回调(主路,替代不稳定的 4B Qwen-VL)。
+        """已废弃:Qwen-VL 打标已禁用,此回调不再被调用。
 
-        把图片(data URL)经 context.llm_generate 的图片输入传给当前 provider。
-        失败(无视觉接口/提供商拒绝图片识别/未配置模型)抛异常,
-        上层 DualTagger 捕获后回退 Qwen-VL 打标——识别不了不阻断打标。
+        保留方法签名向后兼容,外部代码仍可安全引用。
         """
 
         async def call():

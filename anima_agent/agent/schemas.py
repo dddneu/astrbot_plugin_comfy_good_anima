@@ -167,6 +167,9 @@ class AnimaArgs(BaseModel):
     left_anchor: Optional[str] = None    # 左侧原图锚点(客观描述)
     right_edit: Optional[str] = None     # 右侧新状态(灵活描述)
     negative_tags: Optional[str] = None  # 负向 tag(LLM 填槽,Python 拼接)
+    character_dna_tags: Optional[str] = None  # LLM 提纯的角色 DNA 标签（发色/瞳色/面部特征等核心身份）
+    edited_tags: Optional[str] = None  # LLM 提取的修改/新增离散 tag，Python 端自动加权重 (tag:1.1)
+    style_modifiers: Optional[str] = None  # 画风/画师/全局光影尾缀
     # Edit 模式专用:prompt_2 = 组装后的分屏正向 prompt(注入 ComfyUI node 2)
     # prompt_3 = 组装后的分屏负向 prompt(注入 ComfyUI node 3)
     # 普通模式下 prompt_2/prompt_3 未使用,统一用 prompt_11/prompt_12

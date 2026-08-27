@@ -304,14 +304,29 @@ def _viol(check: str, severity: str, detail: str, fix: str) -> Violation:
     return Violation(check=check, severity=severity, detail=detail, fix_suggestion=fix)
 
 
+# ──────────────────────────────────────────────────────────────────
+# Edit 模式：跳过不适用于编辑模式的检查项
+# 理由：edit 模式的 three_layer.hard_tags=[]，三层分离规则不适用。
+# ──────────────────────────────────────────────────────────────────
+EDIT_SKIP_CHECKS = frozenset({
+    "nltags_is_tag_list",           # edit 的 nltags_block=""，非三层结构
+    "prompt_11_layer_order",        # edit 的 prompt_11=prompt_2，无三层组装
+    "old_clothes_in_positive",      # edit 的 soft_phrases 是完整句子，正则易误触
+    "clothes_in_ref_exclude",       # 参考图/编辑模式由 pipeline 单独处理
+})
+
+
 class ProgrammaticReviewer:
     """代码化硬约束审查。不依赖 LLM,确定性。"""
 
     def review(
-        self, args: AnimaArgs, three: ThreeLayerPrompt, brief: VisualBrief
+        self, args: AnimaArgs, three: ThreeLayerPrompt, brief: VisualBrief,
+        *, edit_mode: bool = False
     ) -> ReviewResult:
         violations: list[Violation] = []
         for name, fn in PROGRAMMATIC_CHECKS:
+            if edit_mode and name in EDIT_SKIP_CHECKS:
+                continue
             v = fn(args, three, brief)
             if v is not None:
                 violations.append(v)
