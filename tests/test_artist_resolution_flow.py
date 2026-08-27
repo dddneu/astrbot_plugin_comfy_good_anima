@@ -7,7 +7,7 @@
 
 import json
 
-from anima_agent.agent.draftsman import Draftsman
+from anima_agent.agent.react_agent import ReActDraftsman
 from anima_agent.agent.intent import extract_artist_candidates
 from anima_agent.tag_service.service import DanbooruTagService
 
@@ -51,7 +51,7 @@ def test_confirmed_artists_flow_to_draftsman_user_message():
         }, ensure_ascii=False)
 
     async def run():
-        draftsman = Draftsman(fake_llm, nsfw=False)
+        draftsman = ReActDraftsman(fake_llm, None, nsfw=False)
         result = await draftsman.draft(
             "用 ke-ta 画风画一个女孩", confirmed_artists=["ke-ta"]
         )

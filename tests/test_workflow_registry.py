@@ -27,8 +27,7 @@ def test_list_available_workflows_finds_all_dirs():
         "anima-txt2img-base",
         "anima-txt2img-aesthetic-lora",
         "anima-txt2img-aesthetic-lora-artist-mixer",
-        "anima-txt2img-aesthetic-lora-instantref",
-        "anima-txt2img-aesthetic-lora-instantref",
+        "anima-txt2img-aesthetic-lora-edit",
     ):
         assert wf in found, f"内置工作流未被发现: {wf}"
     # 与目录实际内容一致(发现机制完全由目录驱动)

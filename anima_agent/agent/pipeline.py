@@ -26,8 +26,8 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from anima_agent._paths import WORKFLOW_ROOT
-from anima_agent.agent.draftsman import DraftResult, Draftsman
-from anima_agent.agent.react_agent import SafetyReject
+from anima_agent.agent.draftsman import DraftResult
+from anima_agent.agent.react_agent import ReActDraftsman, SafetyReject
 from anima_agent.agent.reviewer import ProgrammaticReviewer, ReviewResult, Violation
 from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
 from anima_agent.comfyui.client import DEFAULT_TIMEOUT, ComfyUIClient, ComfyUIError
@@ -51,11 +51,6 @@ MAX_RETRIES = 2  # 自审不过时的最大重出轮数
 IPADAPTER_MODEL = "ip_adapter-Character_Reference-10.safetensors"
 # 会话内快速 LoRA(Instant Reference,替代 IP-Adapter 的参考图方案)节点类
 INSTANT_REF_CLASS = "InstantReferenceLoRA"
-# 默认生图工作流附参考图时自动切换到的参考工作流:
-# instantref: 纯 InstantReferenceLoRA(0~1.0步,需1-3分钟训练)
-# instantref-ipadapter: IP-Adapter(0~0.5步) + InstantReferenceLoRA(0.5~1.0步)组合,推荐默认使用
-INSTANT_REF_BASE = "anima-txt2img-aesthetic-lora"
-INSTANT_REF_WORKFLOW = "anima-txt2img-aesthetic-lora-edit"
 
 # args 字段名 → InstantReferenceLoRA 节点输入名(LLM 经 tune_params 设置)
 # 步数截断:让 InstantReferenceLoRA 只在前中期生效,把后期细节交给基础模型
@@ -161,7 +156,6 @@ class AgentPipeline:
         tag_service: Optional[DanbooruTagService] = None,
         injector: Optional[SchemaInjector] = None,
         enable_llm_review: bool = True,
-        draftsman_mode: str = "react",  # react(工具循环,自纠错)/ oneshot(一次性出稿)
         nsfw: bool = False,   # Anima 模型用 NSFW 数据训练,开启后画质显著提升
         instantref_params: Optional[dict] = None,  # InstantRef 基线(程序化注入/测试用,面板已无此配置)
         armor_break_prompt: str = "",  # 破甲提示词(配置注入,出稿 system prompt 第一步)
@@ -169,23 +163,16 @@ class AgentPipeline:
         self.nsfw = nsfw
         self.instantref_params = dict(instantref_params or {})
         self.armor_break_prompt = armor_break_prompt or ""
-        self.draftsman = Draftsman(
-            llm_complete, nsfw=nsfw, armor_break_prompt=self.armor_break_prompt
-        )
         self.client = comfyui_client
         self.tags = tag_service or DanbooruTagService()
-        self.draftsman_mode = draftsman_mode
-        if draftsman_mode == "react":
-            from anima_agent.agent.react_agent import ReActDraftsman
-
-            self.react_draftsman = ReActDraftsman(
-                llm_complete, self.tags, nsfw=nsfw,
-                armor_break_prompt=self.armor_break_prompt,
-            )
-        else:
-            self.react_draftsman = None
+        # 简化：唯一出稿器即 SimpleAgent (alias ReActDraftsman)
+        self.draftsman = ReActDraftsman(
+            llm_complete, self.tags, nsfw=nsfw,
+            armor_break_prompt=self.armor_break_prompt,
+        )
+        # 兼容旧测试断言 pipe.draftsman.armor_break_prompt / pipe.react_draftsman.X
+        self.react_draftsman = self.draftsman
         self.injector = injector or SchemaInjector()
-        self.nsfw = nsfw
         self.programmatic_reviewer = ProgrammaticReviewer()
         self.enable_llm_review = enable_llm_review
         self.llm_reviewer = None
@@ -301,18 +288,11 @@ class AgentPipeline:
 
             t1 = time.monotonic()
             try:
-                if self.react_draftsman is not None:
-                    draft = await self.react_draftsman.draft(
-                        user_prompt, session_context=ctx, workflow_id=effective_workflow_id,
-                        confirmed_artists=confirmed_artists, ref_tags=ref_tags,
-                        character_sheet=character_sheet,
-                    )
-                else:
-                    draft = await self.draftsman.draft(
-                        user_prompt, session_context=ctx, workflow_id=effective_workflow_id,
-                        confirmed_artists=confirmed_artists, ref_tags=ref_tags,
-                        character_sheet=character_sheet,
-                    )
+                draft = await self.draftsman.draft(
+                    user_prompt, session_context=ctx, workflow_id=effective_workflow_id,
+                    confirmed_artists=confirmed_artists, ref_tags=ref_tags,
+                    character_sheet=character_sheet,
+                )
             except SafetyReject as e:
                 if task_id and self._tracker:
                     await self._tracker.set_failed(task_id)
@@ -364,38 +344,44 @@ class AgentPipeline:
             # 2.5 画质地板:补齐质量前缀与负向核心(程序化,防 LLM 漂移)
             self._enforce_quality_floor(draft, effective_workflow_id)
 
-            # 3. Edit 模式:LLM 填槽 + Python 组装分屏 prompt
+            # 3. Edit 模式:LLM 填槽(left/right 陈述句短语 + tag_queries) + Python 组装完整分屏 prompt
             # 普通模式:重新组装 prompt_11
             is_edit_workflow = bool(effective_workflow_id) and "edit" in effective_workflow_id
             if is_edit_workflow:
-                # Edit 模式: draftsman 已通过 EDIT_MODE_SYSTEM 输出 left_anchor/right_edit/negative_tags
-                # Python 组装:prompt_2 = split screen + left_anchor + right_edit
-                left_anchor = draft.args.left_anchor or ""
-                right_edit = draft.args.right_edit or ""
+                # soft_phrases[0]=left_anchor (左图陈述句短语), soft_phrases[1]=right_edit (右图新内容短语)
+                soft = list(draft.three_layer.soft_phrases or [])
+                left_anchor = soft[0] if len(soft) >= 1 else ""
+                right_edit = soft[1] if len(soft) >= 2 else ""
 
-                if left_anchor and right_edit:
-                    # 正常流程:LLM 已输出 edit 字段
-                    draft.args.prompt_2 = assemble_edit_prompt(left_anchor, right_edit)
-                    draft.args.prompt_3 = assemble_edit_negative(draft.args.negative_tags or "")
-                    # prompt_11/12 供 schema_injector 兼容(edit 模式用 prompt_2/3)
-                    draft.args.prompt_11 = draft.args.prompt_2
-                    draft.args.prompt_12 = draft.args.prompt_3
-                    print(f"[pipeline] edit mode: left_anchor={left_anchor[:80]}")
-                    print(f"[pipeline] edit mode: right_edit={right_edit[:80]}")
-                    print(f"[pipeline] edit mode: prompt_2={draft.args.prompt_2[:120]}")
-                else:
-                    # 回退:LLM 没有输出 edit 字段,从 ref_tags 提取基础描述
+                # 必须的两个短语;缺失则从 ref_tags 回退
+                if not left_anchor or not right_edit:
                     fallback = self._fallback_edit_args(ref_tags or "")
-                    draft.args.left_anchor = fallback["left_anchor"]
-                    draft.args.right_edit = fallback["right_edit"]
-                    draft.args.negative_tags = fallback["negative_tags"]
-                    draft.args.prompt_2 = assemble_edit_prompt(
-                        draft.args.left_anchor, draft.args.right_edit
-                    )
-                    draft.args.prompt_3 = assemble_edit_negative(draft.args.negative_tags)
-                    draft.args.prompt_11 = draft.args.prompt_2
-                    draft.args.prompt_12 = draft.args.prompt_3
-                    print(f"[pipeline] edit mode (fallback): {draft.args.prompt_2[:120]}")
+                    left_anchor = left_anchor or fallback["left_anchor"]
+                    right_edit = right_edit or fallback["right_edit"]
+
+                # hard_tags 已被 _enforce_quality_floor 补齐 QUALITY_PREFIX 在头部
+                # 仍属于"内容 tag"的部分直接复用
+                hard_tags = list(draft.three_layer.hard_tags or [])
+
+                # 其余 soft_phrases（>=3 元素）作为额外短语
+                extra_soft = soft[2:] if len(soft) > 2 else []
+
+                draft.args.prompt_2 = assemble_edit_prompt(
+                    left_anchor=left_anchor,
+                    right_edit=right_edit,
+                    hard_tags=hard_tags,
+                    extra_soft_phrases=extra_soft,
+                )
+                draft.args.prompt_3 = assemble_edit_negative(draft.args.negative_tags or "")
+                # prompt_11/12 供 schema_injector 兼容(edit 模式用 prompt_2/3)
+                draft.args.prompt_11 = draft.args.prompt_2
+                draft.args.prompt_12 = draft.args.prompt_3
+                # 保留 left_anchor/right_edit 在 args 里以便 debug / schema 注入
+                draft.args.left_anchor = left_anchor
+                draft.args.right_edit = right_edit
+                print(f"[pipeline] edit mode: left_anchor={left_anchor[:80]}")
+                print(f"[pipeline] edit mode: right_edit={right_edit[:80]}")
+                print(f"[pipeline] edit mode: prompt_2={draft.args.prompt_2[:200]}")
             else:
                 # 3. 重新组装 prompt_11
                 draft.args.prompt_11 = draft.three_layer.assemble()
@@ -1206,6 +1192,8 @@ def _resolve_ref_workflow(workflow_id: str, has_ref: bool) -> str:
       的分屏编辑模式),其他工作流优先用其手动 *-ref 版本,不存在则退回 edit。
     - 无参考但 workflow 是参考工作流 → 去后缀回退基础版本(防 __REF_IMAGE__ 泄漏)。
     """
+    INSTANT_REF_WORKFLOW = "anima-txt2img-aesthetic-lora-edit"
+    INSTANT_REF_BASE = "anima-txt2img-aesthetic-lora"
     if has_ref and not _is_ref_capable_workflow(workflow_id):
         if workflow_id == INSTANT_REF_BASE:
             return INSTANT_REF_WORKFLOW

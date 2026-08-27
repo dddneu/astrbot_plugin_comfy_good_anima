@@ -305,12 +305,7 @@ class SimpleAgent:
         return "\n".join(parts)
 
     def _parse(self, resp: str) -> DraftResult:
-        data = extract_json(resp)
-        if not data:
-            raise ValueError(
-                f"simple agent LLM 返回无法解析为 JSON (len={len(resp)}). "
-                f"前 500 字符: {resp[:500]!r}"
-            )
+        data = self._parse_draft_json(resp, mode="normal")
 
         # 检查安全拒绝
         intent = data.get("intent", "normal")
@@ -347,6 +342,37 @@ class SimpleAgent:
             tag_queries=tag_queries,
         )
 
+    def _parse_draft_json(self, resp: str, *, mode: str = "normal") -> dict:
+        """解析 LLM 输出为 draft dict。
+
+        Args:
+            resp: LLM 原始响应字符串
+            mode: "normal" — 完整 draft schema(含 brief/three_layer/args/tag_queries)；
+                  "edit"   — edit schema(仅 args + tag_queries)
+
+        Raises:
+            ValueError: JSON 解析失败或顶层字段缺失。
+        """
+        data = extract_json(resp)
+        if not data:
+            raise ValueError(
+                f"{mode} agent LLM 返回无法解析为 JSON (len={len(resp)}). "
+                f"前 500 字符: {resp[:500]!r}"
+            )
+        if mode == "edit":
+            if "args" not in data or not isinstance(data.get("args"), dict):
+                raise ValueError(
+                    f"edit agent LLM 输出缺少 args 字段或 args 不是对象: "
+                    f"{list(data.keys())}"
+                )
+        else:
+            if "brief" not in data or "three_layer" not in data or "args" not in data:
+                raise ValueError(
+                    f"normal agent LLM 输出缺少 brief/three_layer/args 字段: "
+                    f"{list(data.keys())}"
+                )
+        return data
+
     @staticmethod
     def _coerce_three_layer(raw) -> dict:
         """three_layer 字段别名容错。"""
@@ -371,14 +397,44 @@ class SimpleAgent:
             )
         return out
 
-    def _extract_wd14_tags(self, ref_tags: str) -> str:
-        """从 ref_tags 中提取 [wd14] 部分的标签。"""
-        if "[wd14]" in ref_tags:
-            parts = ref_tags.split("[wd14]")
+    @staticmethod
+    def _extract_wd14_tags(ref_tags: str) -> str:
+        """从 ref_tags 中提取干净的逗号分隔 tag 字符串，过滤元信息行和分隔符。
+
+        ref_tags 典型格式:
+          [wd14]
+          1girl, solo, long hair, school uniform, ...
+          ---
+          camera_angle: frontal
+          art_style: digital illustration
+          ...
+
+        输出: 逗号分隔的纯 danbooru tag 字符串，喂给 LLM 作为 left_anchor 原料。
+        """
+        raw = ref_tags.strip()
+        if "[wd14]" in raw:
+            parts = raw.split("[wd14]")
             if len(parts) > 1:
-                wd14_part = parts[1].split("[")[0].strip()
-                return wd14_part
-        return ref_tags.strip()
+                raw = parts[1].split("[")[0].strip()
+
+        # 去掉 "---" 后面的一切（通常是元信息行）
+        if "---" in raw:
+            raw = raw.split("---")[0].strip()
+
+        # 过滤元信息行: 去掉 "word: value" 格式的行(如 camera_angle:, art_style: 等)
+        # 识别模式: 行中有 ":" 但不是逗号分隔 tag 中的下划线版 tag
+        lines = raw.splitlines()
+        tag_lines = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # 元信息行特征: 包含 "word: value" 且不含逗号分隔的 danbooru tag
+            if ":" in line and "," not in line:
+                continue
+            tag_lines.append(line)
+
+        return ", ".join(tag_lines).strip()
 
     async def _draft_edit_mode(self, wd14_tags: str, user_intent: str) -> DraftResult:
         """Edit 模式出稿:调用 LLM 生成 left_anchor/right_edit/negative_tags。
@@ -386,34 +442,82 @@ class SimpleAgent:
         Edit 模式不走 normal 三层 prompt,直接从 ref_tags 中提取 WD14 tags,
         配合用户意图调用 LLM 生成编辑参数。
 
-        如果 LLM 返回格式不对,回退到基础描述。
+        重试策略:最多重试 ``MAX_PARSE_RETRIES`` 次——把上一次的解析/字段错误回喂
+        给 LLM 让它修正。仍失败才走 ``_fallback_edit_draft``。
         """
-        import json
         from anima_agent.agent.prompts import generate_edit_prompts
-        from anima_agent.agent.utils import extract_json
 
         msgs = generate_edit_prompts(wd14_tags, user_intent)
         messages = msgs["messages"]
 
-        # 调用 LLM 生成 edit 参数
         system_prompt = messages[0]["content"]
         user_prompt = messages[-1]["content"]
 
-        resp = await maybe_await(self.llm_complete(system_prompt, user_prompt))
+        last_err: Optional[Exception] = None
+        for attempt in range(MAX_PARSE_RETRIES + 1):
+            msg = user_prompt
+            if last_err is not None:
+                msg += (
+                    "\n\nYour previous response failed to parse. Error:\n"
+                    f"{str(last_err)[:600]}\n"
+                    "Reminder: output ONLY the JSON object matching the schema, "
+                    "no prose, no markdown fences, no trailing explanation. "
+                    "Field names MUST be exactly: args.left_anchor, args.right_edit, "
+                    "args.negative_tags, tag_queries."
+                )
+            resp = await maybe_await(self.llm_complete(system_prompt, msg))
+            try:
+                data = self._parse_draft_json(resp, mode="edit")
+            except (ValueError, KeyError, TypeError) as e:
+                last_err = e
+                logger.warning(
+                    "edit agent attempt %d parse failed: %s", attempt, str(e)[:200]
+                )
+                continue
 
-        # 解析 LLM 输出
-        data = extract_json(resp)
-        if not data:
-            logger.warning("edit 模式 LLM 返回无法解析为 JSON,使用回退描述")
-            return self._fallback_edit_draft(wd14_tags, user_intent)
+            args_data = dict(data.get("args") or {})
+            if not args_data.get("right_edit") or not args_data.get("left_anchor"):
+                last_err = ValueError(
+                    f"edit agent 缺少必要字段(left_anchor={args_data.get('left_anchor')!r}, "
+                    f"right_edit={args_data.get('right_edit')!r})"
+                )
+                logger.warning(
+                    "edit agent attempt %d missing fields: %s", attempt, str(last_err)[:200]
+                )
+                continue
 
-        args_data = dict(data.get("args") or {})
-        if not args_data.get("left_anchor") or not args_data.get("right_edit"):
-            logger.warning("edit 模式 LLM 输出缺少 left_anchor 或 right_edit 字段,使用回退描述")
-            return self._fallback_edit_draft(wd14_tags, user_intent, args_data)
+            return self._build_edit_draft_result(args_data, data)
 
-        # 构建 Edit 模式的 DraftResult
+        logger.warning(
+            "edit agent 重试 %d 次后仍无法解析 LLM 输出,使用回退描述: %s",
+            MAX_PARSE_RETRIES, str(last_err)[:200] if last_err else "unknown",
+        )
+        return self._fallback_edit_draft(wd14_tags, user_intent)
+
+    def _build_edit_draft_result(
+        self, args_data: dict, data: dict
+    ) -> DraftResult:
+        """把 edit 模式的 args dict 包装成 DraftResult。
+
+        主动用 assemble_edit_prompt / assemble_edit_negative 把 prompt_2/prompt_3
+        组装出来,顺便镜像一份到 prompt_11/prompt_12(满足 AnimaArgs 必填约束;
+        pipeline 后续还会用 prompt_2 重写 prompt_11,所以这里只是兜底)。
+        """
+        from anima_agent.agent.prompts import assemble_edit_negative, assemble_edit_prompt
         from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
+
+        left_anchor = args_data.get("left_anchor") or ""
+        right_edit = args_data.get("right_edit") or ""
+        negative_tags = args_data.get("negative_tags") or ""
+
+        # 组装分屏 prompt —— pipeline 后续会用这个重写 args.prompt_2
+        assembled_positive = assemble_edit_prompt(
+            left_anchor=left_anchor,
+            right_edit=right_edit,
+            hard_tags=None,
+            extra_soft_phrases=None,
+        )
+        assembled_negative = assemble_edit_negative(negative_tags)
 
         brief = VisualBrief(
             subject="edit subject",
@@ -426,9 +530,21 @@ class SimpleAgent:
             subject_ratio="medium",
             situation_cause_chain="",
         )
-        three = ThreeLayerPrompt(hard_tags=[], soft_phrases=[], nltags_block="")
+        three = ThreeLayerPrompt(
+            hard_tags=[],
+            soft_phrases=[left_anchor, right_edit],
+            nltags_block="",
+        )
 
-        # 默认字段
+        args_data.setdefault("prompt_2", assembled_positive)
+        args_data.setdefault("prompt_3", assembled_negative)
+        # prompt_11/12 是 AnimaArgs 必填;edit 模式实际不用(pipeline 会用 prompt_2/3),
+        # 这里镜像一份只是为了不让 Pydantic 校验炸。
+        args_data.setdefault("prompt_11", assembled_positive)
+        args_data.setdefault("prompt_12", assembled_negative)
+        args_data.setdefault("left_anchor", left_anchor)
+        args_data.setdefault("right_edit", right_edit)
+        args_data.setdefault("negative_tags", negative_tags)
         args_data.setdefault("width", 1152)
         args_data.setdefault("height", 1536)
         args_data.setdefault("batch_size", 5)
@@ -451,17 +567,28 @@ class SimpleAgent:
     def _fallback_edit_draft(
         self, wd14_tags: str, user_intent: str, args_data: Optional[dict] = None
     ) -> DraftResult:
-        """Edit 模式回退:当 LLM 调用失败时,从 WD14 tags 提取基本信息。"""
-        from anima_agent.agent.prompts import assemble_edit_prompt, assemble_edit_negative
+        """Edit 模式回退:当 LLM 输出缺少必要字段时,从 WD14 tags 提取基本信息。"""
+        from anima_agent.agent.prompts import (
+            assemble_edit_negative,
+            assemble_edit_prompt,
+        )
         from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
 
-        left_anchor = wd14_tags if wd14_tags else "a character image"
-        right_edit = f"the character with: {user_intent}" if user_intent else "the character in a similar pose"
-        negative_tags = "worst quality, low quality, bad anatomy"
+        left_anchor = args_data.get("left_anchor") if args_data else ""
+        if not left_anchor:
+            left_anchor = wd14_tags if wd14_tags else "a character image"
+        right_edit = args_data.get("right_edit") if args_data else ""
+        if not right_edit:
+            right_edit = f"the image based on: {user_intent}" if user_intent else "a similar image"
+        negative_tags = args_data.get("negative_tags") if args_data else ""
+        if not negative_tags:
+            negative_tags = "worst quality, low quality, bad anatomy"
 
-        # Python 组装:prompt_2 = split screen + left_anchor + right_edit
-        prompt_2 = assemble_edit_prompt(left_anchor, right_edit)
-        prompt_3 = assemble_edit_negative(negative_tags)
+        assembled_positive = assemble_edit_prompt(
+            left_anchor=left_anchor,
+            right_edit=right_edit,
+        )
+        assembled_negative = assemble_edit_negative(negative_tags)
 
         brief = VisualBrief(
             subject="edit subject",
@@ -474,21 +601,33 @@ class SimpleAgent:
             subject_ratio="medium",
             situation_cause_chain="",
         )
-        three = ThreeLayerPrompt(hard_tags=[], soft_phrases=[], nltags_block="")
+        three = ThreeLayerPrompt(
+            hard_tags=[],
+            soft_phrases=[left_anchor, right_edit],
+            nltags_block="",
+        )
 
-        # 从 args_data 提取已有字段,补充缺失字段
         final_args = dict(args_data) if args_data else {}
-        final_args.setdefault("prompt_11", prompt_2)
-        final_args.setdefault("prompt_12", prompt_3)
-        final_args.setdefault("left_anchor", left_anchor)
-        final_args.setdefault("right_edit", right_edit)
-        final_args.setdefault("negative_tags", negative_tags)
+        final_args["prompt_2"] = assembled_positive
+        final_args["prompt_3"] = assembled_negative
+        # prompt_11/12 是 AnimaArgs 必填;edit 模式实际不用(pipeline 会用 prompt_2/3),
+        # 这里镜像一份只是为了不让 Pydantic 校验炸。
+        final_args["prompt_11"] = assembled_positive
+        final_args["prompt_12"] = assembled_negative
+        final_args["left_anchor"] = left_anchor
+        final_args["right_edit"] = right_edit
+        final_args["negative_tags"] = negative_tags
         final_args.setdefault("width", 1152)
         final_args.setdefault("height", 1536)
         final_args.setdefault("batch_size", 5)
         final_args.setdefault("steps", 8)
         final_args.setdefault("rtx_vsr_quality", "ULTRA")
         final_args.setdefault("filename_prefix", "anima/edit")
+
+        logger.info(
+            "edit fallback left_anchor=%r right_edit=%r",
+            left_anchor, right_edit,
+        )
 
         args = AnimaArgs(**final_args)
         return DraftResult(

@@ -26,8 +26,6 @@ from typing import Callable, Optional
 
 from anima_agent.agent.intent import AMBIGUOUS, ARTIST_MIXER, MODIFY, NEW, IntentRouter
 from anima_agent.agent.pipeline import (
-    INSTANT_REF_BASE,
-    INSTANT_REF_WORKFLOW,
     AgentPipeline,
     GenerationResult,
     _is_ref_capable_workflow,
@@ -391,17 +389,6 @@ class AnimaAgentPlugin:
                     f"工作流 {pre_workflow} 需要参考图,本次未附图,已自动回退为 {effective_workflow}。"
                     "附上参考图(或会话里复用)才会走参考工作流"
                 )
-            elif (
-                has_ref
-                and not _is_ref_capable_workflow(pre_workflow)
-                and resolved_workflow == INSTANT_REF_WORKFLOW
-                and pre_workflow != INSTANT_REF_BASE
-            ):
-                # 手动 *-ref/-edit 不存在 → 改用 edit 工作流兜底
-                route_notes.append(
-                    f"工作流 {pre_workflow} 没有参考版本,已改用 edit 工作流(InstantReferenceLoRA 分屏编辑模式)"
-                )
-
         try:
             result = await self.pipeline.generate(
                 user_text,
@@ -609,7 +596,9 @@ class AnimaAgentPlugin:
                 ref_tags=ctx.ref_tags,
                 character_sheet=ctx.character_sheet,
                 last_payload=last_payload,
-                submitted_positive=_submitted_positive_text(last_payload, ctx.submitted_positive),
+                submitted_positive=_submitted_positive_text(
+                    last_payload, ctx.submitted_positive
+                ),
                 last_user_text=ctx.last_user_text,
                 last_workflow_id=ctx.last_workflow_id,
                 random_style=ctx.random_style,
@@ -623,7 +612,9 @@ class AnimaAgentPlugin:
             brief=ctx.last_brief,
             three_layer=ctx.last_three_layer,
             image_bytes_list=images,
-            submitted_positive=_submitted_positive_text(last_payload, ctx.submitted_positive),
+            submitted_positive=_submitted_positive_text(
+                last_payload, ctx.submitted_positive
+            ),
         )
         label = f"重绘 x{times}" if times > 1 else "重绘"
         prompt_suffix = self._prompt_reply_suffix(result)

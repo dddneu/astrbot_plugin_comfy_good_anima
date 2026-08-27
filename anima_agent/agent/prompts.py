@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 
 # ──────────────────────────────────────────────────────────────────
 # 1. 安全审查（最先，决定能不能做）
@@ -645,9 +647,13 @@ LLM **只负责语义提取**，不负责拼接长句。拼接由 Python 代码�
 
 ### 2. right_edit（右侧新状态）
 根据修改意图灵活描述右侧的画面（禁止写左侧旧内容）：
-- 局部修改/改动作：`the image is exactly the same, but the [character] is now [新细节]`
-- 全局换装/换场景：`the [character] has completely changed and now [新衣服/场景]`
-- 画风迁移：`the composition remains identical, but rendered in [新画风]`
+- **人物没变**（换表情/换装/换道具/局部修改）：`the image is exactly the same, but the [character] is now [新细节]`
+  - 例：换表情 → `the image is exactly the same, but the girl is now smiling brightly`
+  - 例：换衣服 → `the image is exactly the same, but the girl is now wearing a winter jacket`
+  - 例：换道具 → `the image is exactly the same, but the character is now holding a bouquet of flowers`
+- **人物变了**（换角色）：`the character has been completely replaced with [新角色描述]`
+- **只换场景**：人物不变，场景变了
+- **画风迁移**：`the composition remains identical, but rendered in [新画风]`
 
 ### 3. negative_tags（负向镇压）
 逗号分隔的 tag，包含：
@@ -664,7 +670,7 @@ LLM **只负责语义提取**，不负责拼接长句。拼接由 Python 代码�
 EDIT_MODE_FEW_SHOT = """
 ## Few-Shot 示例
 
-**示例 1：换装**
+**示例 1：换装（人物没变）**
 User Intent: "换成厚羽绒服和滑雪镜"
 [wd14] tags: 1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors
 
@@ -672,7 +678,7 @@ Assistant Output:
 {
   "args": {
     "left_anchor": "a girl with short hair stands outdoors wearing a black t-shirt and blue jeans",
-    "right_edit": "the girl has completely changed and now wears a thick puffy winter jacket and ski goggles, standing in the same outdoor environment",
+    "right_edit": "the image is exactly the same, but the girl is now wearing a thick winter jacket and ski goggles in the same outdoor environment",
     "negative_tags": "black_t-shirt, blue_jeans, short_sleeves, worst quality, low quality, bad anatomy, bad hands"
   },
   "tag_queries": []
@@ -726,8 +732,8 @@ EDIT_MODE_JSON_SKELETON = """# 输出格式
 直接输出以下 JSON（字段名不可更改）：
 {
   "args": {
-    "left_anchor": "客观描述 [wd14] 标签中原图的视觉状态（服装、动作、画风、场景）",
-    "right_edit": "根据意图灵活描述右侧的新状态（禁止写左侧旧内容）",
+    "left_anchor": "描述左图原图的视觉状态（角色、服装、动作、场景、画风等）的陈述句",
+    "right_edit": "描述右图新状态的陈述句：人物没变 → 以 'the image is exactly the same, but the...' 开头；人物变了 → 以 'the character has been completely replaced with...' 开头",
     "negative_tags": "逗号分隔的负向tag（worst quality, low quality + 被替换的旧特征）",
     "width": 1152,
     "height": 1536,
@@ -769,6 +775,7 @@ args 示例：
 # 动态组装函数
 # ──────────────────────────────────────────────────────────────────
 
+
 def build_draftsman_prompt(
     nsfw: bool = False, workflow_id: str = "", armor_break_prompt: str = ""
 ) -> str:
@@ -808,7 +815,7 @@ def build_draftsman_prompt(
         parts.append(ARTIST_MIXER_MODE)
 
     # 4. 通用出稿规则
-    parts.append(DRAFTSMAN_CREATIVE_RULES)   # 创意规则：情境/八维/三层/画布
+    parts.append(DRAFTSMAN_CREATIVE_RULES)  # 创意规则：情境/八维/三层/画布
     parts.append(DRAFTSMAN_UNIVERSAL_RULES)  # 底线规则：负向/冲突检查/Tag校验/画师
 
     # 5. 精细调参指南（参考图/普通模式）
@@ -838,26 +845,39 @@ def generate_edit_prompts(wd14_tags: str, user_intent: str) -> dict:
     import json
 
     system_prompt = """You are an expert prompt engineer for ICLoRAConcat split-screen inpaint editing.
-LLM ONLY extracts semantics; Python code handles sentence assembly.
+LLM ONLY fills visual phrase slots; Python code handles the full prompt assembly.
+
+OUTPUT FORMAT — STRICT RULES
+- Output ONLY a single JSON object. NO prose, NO markdown code fences, NO commentary before or after.
+- Do not wrap the JSON in ``` or any other delimiters.
+- Do not append explanations like "Here is the JSON:" or "Hope this helps".
+- Field names MUST match the schema exactly. Do not invent extra top-level fields.
 
 OUTPUT JSON SCHEMA (field names MUST be exactly as shown):
 {
   "args": {
-    "left_anchor": "Objective description of the original image from [wd14] tags (clothing, action, style, scene). Do NOT write any new content for the right side.",
-    "right_edit": "Description of the right side based on edit intent (do NOT mention old content from left):
-      - Local edit: "the image is exactly the same, but the [character] is now [change]"
-      - Style transfer: "the composition remains identical, but rendered in [style]"
-      - Full change: "the [character] has completely changed and now [new state]"
-    "negative_tags": "Comma-separated tags. Always include: worst quality, low quality, bad anatomy, bad hands. Add old features from [wd14] that are being replaced."
+    "left_anchor": "A declarative sentence describing the LEFT/original image's visual state. Describe the character, clothing, pose, scene, style etc.",
+    "right_edit": "A declarative sentence describing the RIGHT/new visual state.",
+    "negative_tags": "Comma-separated tags to suppress. Always include: worst quality, low quality. Add old features being replaced."
   },
   "tag_queries": [{"id": "...", "group": "character", "keyword": "if changing to a specific character, fill in English name; otherwise empty array"}]
 }
 
+ASSEMBLY (done by Python, for your reference):
+  final_prompt = <QUALITY_PREFIX + hard_tags from tag service> + soft_phrases + ", split screen, multiple view, A split screen image. On the left side, <left_anchor>. On the right side, <right_edit>."
+
 RULES:
-1. left_anchor: ONLY describe the left/original image. NO new content for right side.
-2. right_edit: ONLY describe the right/new content. NO old content from left side.
+1. left_anchor: declarative sentence. Describe ONLY the left/original image (character, clothing, pose, scene, style). NO right-side content.
+2. right_edit: declarative sentence. Describe what changes on the right side. NO left-side content.
+   - Character NOT changed (same person): START with "the image is exactly the same, but the [character] is now [change]"
+     Examples: change expression → "the image is exactly the same, but the girl is now smiling brightly"
+                change clothes → "the image is exactly the same, but the girl is now wearing a winter jacket"
+                change held item → "the image is exactly the same, but the character is now holding a bouquet of flowers"
+   - Character changed (different person): "the character has been completely replaced with [new character description]"
+   - Scene changed only: "the scene has changed to [new scene], but the character remains the same"
+   - Style transfer: "the composition remains the same, but rendered in [new art style]"
 3. negative_tags: Comma-separated tags only. NO natural language sentences.
-4. NEVER use negation phrases like "no old", "no longer", "instead of" — CLIP does not understand negation.
+4. NEVER use negation phrases like "no old", "no longer" — CLIP does not understand negation.
 5. If the user specifies a new character, include a tag_query for that character."""
 
     few_shot_messages = [
@@ -867,14 +887,17 @@ RULES:
         },
         {
             "role": "assistant",
-            "content": json.dumps({
-                "args": {
-                    "left_anchor": "a girl with short hair in a school uniform stands in a classroom with a serious, expressionless face",
-                    "right_edit": "the image is exactly the same, but the girl is now smiling brightly and laughing joyfully",
-                    "negative_tags": "serious, expressionless, blank_stare, worst quality, low quality, bad anatomy"
+            "content": json.dumps(
+                {
+                    "args": {
+                        "left_anchor": "a girl with short hair in a school uniform stands in a classroom with a serious, expressionless face",
+                        "right_edit": "the image is exactly the same, but the girl is now smiling brightly and laughing joyfully",
+                        "negative_tags": "serious, expressionless, blank_stare, worst quality, low quality, bad anatomy",
+                    },
+                    "tag_queries": [],
                 },
-                "tag_queries": []
-            }, indent=2),
+                indent=2,
+            ),
         },
         {
             "role": "user",
@@ -882,14 +905,17 @@ RULES:
         },
         {
             "role": "assistant",
-            "content": json.dumps({
-                "args": {
-                    "left_anchor": "a cel-shaded anime girl with short hair sits indoors wearing a black dress",
-                    "right_edit": "the composition remains identical, but the entire image is now rendered in a beautiful traditional watercolor painting style, with soft color bleeding and delicate brush strokes",
-                    "negative_tags": "cel_shading, (cel_shading_style:1.4), worst quality, low quality, bad anatomy"
+            "content": json.dumps(
+                {
+                    "args": {
+                        "left_anchor": "a cel-shaded anime girl with short hair sits indoors wearing a black dress",
+                        "right_edit": "the composition remains the same, but the entire image is rendered in a beautiful watercolor painting style with soft color bleeding and delicate brush strokes",
+                        "negative_tags": "cel_shading, worst quality, low quality, bad anatomy",
+                    },
+                    "tag_queries": [],
                 },
-                "tag_queries": []
-            }, indent=2),
+                indent=2,
+            ),
         },
         {
             "role": "user",
@@ -897,23 +923,49 @@ RULES:
         },
         {
             "role": "assistant",
-            "content": json.dumps({
-                "args": {
-                    "left_anchor": "a girl with short hair stands outdoors wearing a black t-shirt and blue jeans",
-                    "right_edit": "the girl has completely changed and now wears a thick puffy winter jacket and ski goggles, standing in the same outdoor environment",
-                    "negative_tags": "black_t-shirt, blue_jeans, short_sleeves, worst quality, low quality, bad anatomy, bad hands"
+            "content": json.dumps(
+                {
+                    "args": {
+                        "left_anchor": "a girl with short hair stands outdoors wearing a black t-shirt and blue jeans",
+                        "right_edit": "the image is exactly the same, but the girl is now wearing a thick winter jacket and ski goggles in the same outdoor environment",
+                        "negative_tags": "black_t-shirt, blue_jeans, short_sleeves, worst quality, low quality, bad anatomy, bad hands",
+                    },
+                    "tag_queries": [],
                 },
-                "tag_queries": []
-            }, indent=2),
+                indent=2,
+            ),
+        },
+        {
+            "role": "user",
+            "content": "WD14 Tags: 1girl, solo, long hair, school uniform, standing, park\nIntent: replace the character with Hatsune Miku",
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "args": {
+                        "left_anchor": "a girl with long hair in a school uniform stands in a park",
+                        "right_edit": "the character has been completely replaced with Hatsune Miku, featuring long turquoise twin-tails, blue eyes, and her iconic white thigh-highs outfit with red shoes",
+                        "negative_tags": "long_hair, school_uniform, (original_character:1.4), worst quality, low quality, bad anatomy",
+                    },
+                    "tag_queries": [
+                        {
+                            "id": "hatsune_miku",
+                            "group": "character",
+                            "keyword": "hatsune miku",
+                        }
+                    ],
+                },
+                indent=2,
+            ),
         },
     ]
 
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(few_shot_messages)
-    messages.append({
-        "role": "user",
-        "content": f"WD14 Tags: {wd14_tags}\nIntent: {user_intent}"
-    })
+    messages.append(
+        {"role": "user", "content": f"WD14 Tags: {wd14_tags}\nIntent: {user_intent}"}
+    )
     return {"messages": messages}
 
 
@@ -921,16 +973,42 @@ RULES:
 # Python Prompt Assembly (LLM fills slots, Python handles formatting)
 # ──────────────────────────────────────────────────────────────────
 
-def assemble_edit_prompt(left_anchor: str, right_edit: str) -> str:
-    """Python-side assembly: LLM fills left_anchor + right_edit, Python formats.
 
-    ICLoRAConcat triggers on split screen spatial anchoring.
-    The model was trained on this specific phrase to activate split-screen mode.
+def assemble_edit_prompt(
+    left_anchor: str,
+    right_edit: str,
+    hard_tags: Optional[list[str]] = None,
+    extra_soft_phrases: Optional[list[str]] = None,
+) -> str:
+    """Python-side assembly for edit mode.
+
+    组装顺序（ICLoRAConcat 训练约束）：
+    1. 质量前缀（QUALITY_PREFIX，由 _enforce_quality_floor 注入 hard_tags 头部）
+    2. 左/右图内容 hard_tags（tag 校验回填的 confirmed tags）
+    3. 额外的 soft_phrases（nltags 等）
+    4. `split screen, multiple view` —— ICLoRAConcat 触发词
+    5. `A split screen image. On the left side, <left_anchor>. On the right side, <right_edit>.`
+       —— 模型训练时学习的左右空间定位句式
+
+    Args:
+        left_anchor: 左侧陈述句短语（5-15 词），描述左图视觉状态
+        right_edit: 右侧陈述句短语（5-15 词），描述右图新内容
+        hard_tags: 标签校验回填的 hard tags（不含质量前缀）
+        extra_soft_phrases: 额外的 soft_phrases
     """
-    return (
-        f"A split screen image. On the left side, {left_anchor}. "
-        f"On the right side, {right_edit}."
+    parts: list[str] = []
+    if hard_tags:
+        parts.append(", ".join(t for t in hard_tags if t and t.strip()))
+    if extra_soft_phrases:
+        phrases = [p.strip() for p in extra_soft_phrases if p and p.strip()]
+        if phrases:
+            parts.append(", ".join(phrases))
+    parts.append("split screen, multiple view")
+    parts.append(
+        f"A split screen image. On the left side, {left_anchor} "
+        f"On the right side, {right_edit}"
     )
+    return ", ".join(parts)
 
 
 def assemble_edit_negative(negative_tags: str) -> str:
@@ -947,4 +1025,3 @@ def assemble_edit_negative(negative_tags: str) -> str:
             if t not in [p.strip() for p in parts]:
                 parts.append(t)
     return ", ".join(parts)
-

@@ -24,7 +24,9 @@ _DRAFT = {
               "light_direction": "ambient", "subject_ratio": "50%",
               "situation_cause_chain": "a -> b -> c"},
     "three_layer": {"hard_tags": ["1girl", "silver hair"], "soft_phrases": [], "nltags_block": "Place her."},
-    "args": {"prompt_12": "worst quality", "width": 1152, "height": 1536, "steps": 30,
+    "args": {"prompt_11": "1girl, silver hair, Place her.", "prompt_12": "worst quality",
+             "left_anchor": "a girl with silver hair", "right_edit": "the image is exactly the same, but the girl is smiling",
+             "width": 1152, "height": 1536, "steps": 30,
              "filename_prefix": "anima/%date:yyyy-MM-dd%/anima_base_v1_0-none-girl"},
     "tag_queries": [],
 }

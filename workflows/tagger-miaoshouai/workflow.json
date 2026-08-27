@@ -20,7 +20,8 @@
       "images": [
         "4",
         0
-      ]
+      ],
+      "caption_method": "tags"
     }
   },
   "7": {

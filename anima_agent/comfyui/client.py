@@ -282,10 +282,14 @@ class ComfyUIClient:
             await self.start()
 
     async def _ws_loop(self) -> None:
-        """单共享 ws 监听循环。断线自动重连。"""
+        """单共享 ws 监听循环。断线自动重连;session 关闭时优雅退出。"""
         assert self._session is not None
         backoff = 1.0
         while True:
+            # session 关闭(插件重载)时优雅退出,不再重连
+            if self._session.closed:
+                logger.info("ws loop: session closed, exiting")
+                break
             try:
                 async with self._session.ws_connect(self.ws_url) as ws:
                     self._ws = ws
@@ -306,6 +310,10 @@ class ComfyUIClient:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                # session 关闭(插件重载)时优雅退出,不再重连
+                if self._session is not None and self._session.closed:
+                    logger.info("ws loop: session closed, exiting")
+                    break
                 logger.warning("ws disconnected: %s, reconnecting in %.1fs", e, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
