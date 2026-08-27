@@ -10,7 +10,7 @@
   "44": {
     "class_type": "AnimaBoosterLoader",
     "inputs": {
-      "model_name": "anima-turbo-v1.1.safetensors",
+      "model_name": "anima-preview3-base.safetensors",
       "sage_attention": "auto",
       "torch_compile": true
     }
@@ -118,7 +118,7 @@
     "class_type": "AnimaTeaCache",
     "inputs": {
       "model": [
-        "62",
+        "65",
         0
       ],
       "threshold": 0.15,

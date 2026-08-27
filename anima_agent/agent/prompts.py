@@ -636,125 +636,86 @@ EDIT_MODE_SYSTEM = """# 【模式】图片编辑模式 —— ICLoRAConcat 分�
 本轮为图片编辑任务。底层技术将原图（左）与待生成图（右）物理拼接后进行推理，
 因此**必须使用严格的左右空间定位句式**，引导模型理解左右的映射关系。
 
-## 核心格式（强制）
-- **正向 prompt_2** 格式必须以空间锚定句式开头：
-  `A split screen image. On the left side, [描述原图锚点]. On the right side, [根据编辑意图描述右侧新状态].`
-  左侧固定为原图锚点；右侧由 prompt 生成（最终输出取右侧）。
-- **负向 prompt_3**：逗号分隔的 tags，用于镇压被替换掉的旧特征。
+## 你的任务（只需填充 JSON 字段）
+LLM **只负责语义提取**，不负责拼接长句。拼接由 Python 代码强制完成。
 
-## 右侧动态语义聚焦规则（如何写 "On the right side, ..."）
-虽然句子结构固定，但右侧的描述策略根据用户意图灵活调整：
+### 1. left_anchor（左侧锚点）
+用自然语言客观描述 [wd14] 标签中的原图状态（如服装、动作、画风、场景）。
+禁止写任何右侧要生成的新内容。
 
-### 1. 局部特征修改（改表情/改手势/加小配饰）
-策略：强调右侧与左侧高度一致，仅做局部突变。
-句式：`..., On the right side, the image is exactly the same, but the [character] is now [smiling / holding a sword / wearing glasses].`
+### 2. right_edit（右侧新状态）
+根据修改意图灵活描述右侧的画面（禁止写左侧旧内容）：
+- 局部修改/改动作：`the image is exactly the same, but the [character] is now [新细节]`
+- 全局换装/换场景：`the [character] has completely changed and now [新衣服/场景]`
+- 画风迁移：`the composition remains identical, but rendered in [新画风]`
 
-### 2. 全局画风迁移（保持内容，只改画风）
-策略：强调右侧构图内容不变，仅变更渲染技法。
-句式：`..., On the right side, the composition and character remain identical, but it is rendered in [watercolor / thick impasto / watercolor] art style.`
-负向必须追加：WD14 中提取的旧画风 tag（如 cel_shading, photorealistic）。
+### 3. negative_tags（负向镇压）
+逗号分隔的 tag，包含：
+- `worst quality, low quality` 等基础保护词
+- [wd14] 中被替换的旧特征 tag（如旧衣服、旧画风、旧动作）
 
-### 3. 视角与构图切换（转背影/特写）
-策略：强调右侧是同一主体的不同摄像机机位。
-句式：`..., On the right side, the exact same character in the same outfit is viewed from [behind / a close-up angle].`
-
-### 4. 常规换装/换场景/换角色（全局重写）
-策略：右侧全盘重写，明确新状态。
-句式：`..., On the right side, the [character] has completely changed and now [描述新服装/环境/动作].`
-
-## 正向 prompt 铁律
-- **只写新内容**：只描述右侧要生成什么，禁止出现任何旧内容词。
-- **禁止否定式列举**：不写 "no old"、"no trace of"、"instead of the old"——
-  CLIP 不理解否定，这些 token 会被当成要生成的内容，拉进潜空间。
-  - 对：`wearing a navy blue school swimsuit with a white sailor collar`
-  - 错：`no longer wearing the old white dress`（"old white dress" 进了正向）
-  - 错：`wearing a swimsuit instead of the old outfit`（"old outfit" 进了正向）
-
-## 负向 prompt 规则
-1. **只写逗号分隔的 tag**；不写自然语言句子。
-2. 始终包含：`worst quality, low quality`。
-3. 从 [wd14] 提取被替换的旧特征 tag 进负向（换什么填什么）。
-4. 默认身体保护词：`bad anatomy, bad hands, bad feet, extra fingers, distorted face`。
+## 铁律
+- **只写新内容**：right_edit 只描述右侧要生成什么，禁止出现任何旧内容词。
+- **禁止否定式**：不写 "no old"、"instead of the old"——CLIP 不理解否定。
+- **只输出 JSON**：不写任何解释性文字，直接输出 JSON。
 """
 
 
 EDIT_MODE_FEW_SHOT = """
 ## Few-Shot 示例
 
-**示例 1：局部编辑（仅改表情）**
-User Intent: "让她开心地大笑"
+**示例 1：换装**
+User Intent: "换成厚羽绒服和滑雪镜"
+[wd14] tags: 1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors
+
+Assistant Output:
+{
+  "args": {
+    "left_anchor": "a girl with short hair stands outdoors wearing a black t-shirt and blue jeans",
+    "right_edit": "the girl has completely changed and now wears a thick puffy winter jacket and ski goggles, standing in the same outdoor environment",
+    "negative_tags": "black_t-shirt, blue_jeans, short_sleeves, worst quality, low quality, bad anatomy, bad hands"
+  },
+  "tag_queries": []
+}
+
+**示例 2：画风迁移**
+User Intent: "改成水彩画"
+[wd14] tags: 1girl, solo, cel_shading, black dress, sitting, indoors
+
+Assistant Output:
+{
+  "args": {
+    "left_anchor": "a cel-shaded anime girl sits indoors wearing a black dress",
+    "right_edit": "the composition remains identical, but the entire image is rendered in a beautiful traditional watercolor painting style",
+    "negative_tags": "cel_shading, (cel_shading_style:1.4), worst quality, low quality, bad anatomy"
+  },
+  "tag_queries": []
+}
+
+**示例 3：改表情**
+User Intent: "让她开心大笑"
 [wd14] tags: 1girl, solo, short hair, school uniform, standing, serious, expressionless, classroom
 
 Assistant Output:
 {
   "args": {
-    "prompt_2": "A split screen image. On the left side, a girl with short hair in a school uniform stands in a classroom with a serious, expressionless face. On the right side, the image is exactly the same, but the girl is now smiling brightly and laughing joyfully.",
-    "prompt_3": "serious, expressionless, blank_stare, worst quality, low quality, bad anatomy"
+    "left_anchor": "a girl with short hair in a school uniform stands in a classroom with a serious, expressionless face",
+    "right_edit": "the image is exactly the same, but the girl is now smiling brightly and laughing joyfully",
+    "negative_tags": "serious, expressionless, blank_stare, worst quality, low quality, bad anatomy"
   },
   "tag_queries": []
 }
 
-**示例 2：局部编辑（仅改手势）**
-User Intent: "让她改成双手举起"
-[wd14] tags: 1girl, solo, long hair, white dress, standing, arms_at_side, beach, sunset
-
-Assistant Output:
-{
-  "args": {
-    "prompt_2": "A split screen image. On the left side, the same girl with long hair stands on a beach at sunset with arms at her side, wearing a white dress. On the right side, the image is exactly the same, but the girl is now raising both arms up in a joyful pose, with her dress slightly lifted by the wind.",
-    "prompt_3": "arms_at_side, (arms_down:1.4), worst quality, low quality, bad anatomy, bad hands"
-  },
-  "tag_queries": []
-}
-
-**示例 3：画风迁移（不改内容，只改画风）**
-User Intent: "把这张图转换成水彩画风格"
-[wd14] tags: 1girl, solo, detailed face, cel_shading, short hair, black dress, sitting, indoors
-
-Assistant Output:
-{
-  "args": {
-    "prompt_2": "A split screen image. On the left side, a cel-shaded anime girl with short hair sits indoors wearing a black dress. On the right side, the composition and character remain exactly the same, but the entire image is now rendered in a beautiful traditional watercolor painting style, with soft color bleeding and delicate brush strokes.",
-    "prompt_3": "cel_shading, (cel_shading_style:1.4), worst quality, low quality, bad anatomy"
-  },
-  "tag_queries": []
-}
-
-**示例 4：视角切换（转背影）**
-User Intent: "给我看她的背影"
-[wd14] tags: 1girl, solo, looking at viewer, front view, red dress, holding umbrella, rain
-
-Assistant Output:
-{
-  "args": {
-    "prompt_2": "A split screen image. On the left side, a front view of a girl in a red dress holding an umbrella in the rain, looking at the viewer. On the right side, the exact same character and outfit are shown, but viewed from directly behind (back view), walking away from the camera through the rain.",
-    "prompt_3": "front_view, looking_at_viewer, face, (front_perspective:1.4), worst quality, low quality, bad anatomy"
-  },
-  "tag_queries": []
-}
-
-**示例 5：常规换装（全局重写）**
-User Intent: "把她的衣服换成厚羽绒服、滑雪镜、冬季裤和厚雪地靴"
-[wd14] tags: 1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors, tree, sunny
-
-Assistant Output:
-{
-  "args": {
-    "prompt_2": "A split screen image. On the left side, the same girl with short hair stands outdoors near a tree on a sunny day, wearing a black t-shirt and blue jeans, as a structural anchor. On the right side, the girl has completely changed and now wears a thick puffy winter jacket, ski goggles, winter pants, and thick snow boots, standing in the same outdoor environment.",
-    "prompt_3": "black_t-shirt, blue_jeans, short_sleeves, summer_clothes, worst quality, low quality, bad anatomy, bad hands"
-  },
-  "tag_queries": []
-}
-
-**示例 6：换角色**
-User Intent: "把这个角色换成初音未来"
+**示例 4：换角色**
+User Intent: "换成初音未来"
 [wd14] tags: 1girl, solo, long hair, school uniform, standing, classroom, blonde hair, green eyes
 
 Assistant Output:
 {
   "args": {
-    "prompt_2": "A split screen image. On the left side, the same girl with blonde hair and green eyes stands in a classroom wearing a school uniform. On the right side, the character has completely changed and is now Hatsune Miku, with long twintails, turquoise hair, blue eyes, wearing her iconic outfit with white thigh-highs and red shoes, standing in the same classroom.",
-    "prompt_3": "blonde_hair, green_eyes, school_uniform, (original_character:1.4), (blonde:1.3), (green_eyes:1.3), worst quality, low quality, bad anatomy"
+    "left_anchor": "a girl with long blonde hair and green eyes stands in a classroom wearing a school uniform",
+    "right_edit": "the character has completely changed and is now Hatsune Miku, with long twintails, turquoise hair, blue eyes, wearing her iconic outfit with white thigh-highs and red shoes",
+    "negative_tags": "blonde_hair, green_eyes, school_uniform, (original_character:1.4), worst quality, low quality, bad anatomy"
   },
   "tag_queries": [{"id": "new_character", "group": "character", "keyword": "hatsune miku"}]
 }
@@ -765,8 +726,12 @@ EDIT_MODE_JSON_SKELETON = """# 输出格式
 直接输出以下 JSON（字段名不可更改）：
 {
   "args": {
-    "prompt_2": "A split screen image. On the left side, [原图锚点描述]. On the right side, [根据编辑意图灵活描述右侧新状态].",
-    "prompt_3": "逗号分隔的负向tag（通用质量基准 + 被替换的旧特征 + 身体保护词）"
+    "left_anchor": "客观描述 [wd14] 标签中原图的视觉状态（服装、动作、画风、场景）",
+    "right_edit": "根据意图灵活描述右侧的新状态（禁止写左侧旧内容）",
+    "negative_tags": "逗号分隔的负向tag（worst quality, low quality + 被替换的旧特征）",
+    "width": 1152,
+    "height": 1536,
+    "filename_prefix": "anima/yyyy-MM-dd/anima_edit-subject"
   },
   "tag_queries": [
     {"id": "角色锚点", "group": "character", "keyword": "如果要求换特定角色，在此填英文名；否则空数组"}
@@ -862,84 +827,84 @@ def build_draftsman_prompt(
 
 
 def generate_edit_prompts(wd14_tags: str, user_intent: str) -> dict:
-    """为图片编辑模式生成结构化的 positive / negative prompt。
+    """为图片编辑模式生成结构化的 positive / negative prompt（LLM 填空 + Python 组装）。
 
     Args:
-        wd14_tags: WD14 tagger 提取的标签（逗号分隔），如
-            "1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors"
-        user_intent: 用户修改意图，如 "把她的衣服换成厚羽绒服和滑雪镜"
+        wd14_tags: WD14 tagger 提取的标签（逗号分隔）
+        user_intent: 用户修改意图
     Returns:
         {"messages": [{"role": ..., "content": ...}, ...]}
     """
     import json
 
     system_prompt = """You are an expert prompt engineer for ICLoRAConcat split-screen inpaint editing.
-ICLoRAConcat physically concatenates the reference (left) and generated (right) images,
-so you MUST use strict left-right spatial anchoring for the model to understand the mapping.
+LLM ONLY extracts semantics; Python code handles sentence assembly.
+
+OUTPUT JSON SCHEMA (field names MUST be exactly as shown):
+{
+  "args": {
+    "left_anchor": "Objective description of the original image from [wd14] tags (clothing, action, style, scene). Do NOT write any new content for the right side.",
+    "right_edit": "Description of the right side based on edit intent (do NOT mention old content from left):
+      - Local edit: "the image is exactly the same, but the [character] is now [change]"
+      - Style transfer: "the composition remains identical, but rendered in [style]"
+      - Full change: "the [character] has completely changed and now [new state]"
+    "negative_tags": "Comma-separated tags. Always include: worst quality, low quality, bad anatomy, bad hands. Add old features from [wd14] that are being replaced."
+  },
+  "tag_queries": [{"id": "...", "group": "character", "keyword": "if changing to a specific character, fill in English name; otherwise empty array"}]
+}
 
 RULES:
-1. prompt_2 MUST start with spatial anchoring: "A split screen image. On the left side, [anchor]. On the right side, [new state]."
-2. Adjust the RIGHT side description strategy based on user intent:
-   - Local edit (expression/gesture): "On the right side, the image is exactly the same, but [change]."
-   - Style transfer: "On the right side, the composition remains identical, but rendered in [style]."
-   - View change: "On the right side, the exact same character viewed from [angle]."
-   - Full change (outfit/scene): "On the right side, the [character] has completely changed and now [new state]."
-3. prompt_3: Comma-separated tags. Extract old features from WD14 tags. Always include: worst quality, low quality, bad anatomy, bad hands.
-4. tag_queries: If user asks to change to a specific character, include the character keyword; otherwise empty array.
-5. NEVER write old content in prompt_2 (no "old", "original", "no trace of").
-6. NEVER write natural language in prompt_3 (only comma-separated tags)."""
+1. left_anchor: ONLY describe the left/original image. NO new content for right side.
+2. right_edit: ONLY describe the right/new content. NO old content from left side.
+3. negative_tags: Comma-separated tags only. NO natural language sentences.
+4. NEVER use negation phrases like "no old", "no longer", "instead of" — CLIP does not understand negation.
+5. If the user specifies a new character, include a tag_query for that character."""
 
     few_shot_messages = [
         {
             "role": "user",
-            "content": (
-                "WD14 Tags: 1girl, solo, short hair, school uniform, standing, serious, expressionless, classroom\n"
-                "Intent: make her smile happily"
-            ),
+            "content": "WD14 Tags: 1girl, solo, short hair, school uniform, standing, serious, expressionless, classroom\nIntent: make her smile happily",
         },
         {
             "role": "assistant",
             "content": json.dumps({
                 "args": {
-                    "prompt_2": "A split screen image. On the left side, a girl with short hair in a school uniform stands in a classroom with a serious, expressionless face. On the right side, the image is exactly the same, but the girl is now smiling brightly and laughing joyfully.",
-                    "prompt_3": "serious, expressionless, blank_stare, worst quality, low quality, bad anatomy, bad hands"
+                    "left_anchor": "a girl with short hair in a school uniform stands in a classroom with a serious, expressionless face",
+                    "right_edit": "the image is exactly the same, but the girl is now smiling brightly and laughing joyfully",
+                    "negative_tags": "serious, expressionless, blank_stare, worst quality, low quality, bad anatomy"
                 },
                 "tag_queries": []
-            }),
+            }, indent=2),
         },
         {
             "role": "user",
-            "content": (
-                "WD14 Tags: 1girl, solo, cel_shading, short hair, black dress, sitting, indoors\n"
-                "Intent: convert this image to watercolor painting style"
-            ),
+            "content": "WD14 Tags: 1girl, solo, cel_shading, short hair, black dress, sitting, indoors\nIntent: convert this image to watercolor painting style",
         },
         {
             "role": "assistant",
             "content": json.dumps({
                 "args": {
-                    "prompt_2": "A split screen image. On the left side, a cel-shaded anime girl with short hair sits indoors wearing a black dress. On the right side, the composition and character remain exactly the same, but the entire image is now rendered in a beautiful traditional watercolor painting style, with soft color bleeding and delicate brush strokes.",
-                    "prompt_3": "cel_shading, (cel_shading_style:1.4), worst quality, low quality, bad anatomy"
+                    "left_anchor": "a cel-shaded anime girl with short hair sits indoors wearing a black dress",
+                    "right_edit": "the composition remains identical, but the entire image is now rendered in a beautiful traditional watercolor painting style, with soft color bleeding and delicate brush strokes",
+                    "negative_tags": "cel_shading, (cel_shading_style:1.4), worst quality, low quality, bad anatomy"
                 },
                 "tag_queries": []
-            }),
+            }, indent=2),
         },
         {
             "role": "user",
-            "content": (
-                "WD14 Tags: 1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors, tree, sunny\n"
-                "Intent: change her clothes to a heavy winter jacket, ski goggles, winter pants, and thick winter boots"
-            ),
+            "content": "WD14 Tags: 1girl, solo, short hair, black t-shirt, blue jeans, standing, outdoors\nIntent: change her clothes to a heavy winter jacket and ski goggles",
         },
         {
             "role": "assistant",
             "content": json.dumps({
                 "args": {
-                    "prompt_2": "A split screen image. On the left side, the same girl with short hair stands outdoors near a tree on a sunny day, wearing a black t-shirt and blue jeans, as a structural anchor. On the right side, the girl has completely changed and now wears a thick puffy winter jacket, ski goggles, winter pants, and thick snow boots, standing in the same outdoor environment.",
-                    "prompt_3": "black_t-shirt, blue_jeans, short_sleeves, summer_clothes, worst quality, low quality, bad anatomy, bad hands"
+                    "left_anchor": "a girl with short hair stands outdoors wearing a black t-shirt and blue jeans",
+                    "right_edit": "the girl has completely changed and now wears a thick puffy winter jacket and ski goggles, standing in the same outdoor environment",
+                    "negative_tags": "black_t-shirt, blue_jeans, short_sleeves, worst quality, low quality, bad anatomy, bad hands"
                 },
                 "tag_queries": []
-            }),
+            }, indent=2),
         },
     ]
 
@@ -950,3 +915,36 @@ RULES:
         "content": f"WD14 Tags: {wd14_tags}\nIntent: {user_intent}"
     })
     return {"messages": messages}
+
+
+# ──────────────────────────────────────────────────────────────────
+# Python Prompt Assembly (LLM fills slots, Python handles formatting)
+# ──────────────────────────────────────────────────────────────────
+
+def assemble_edit_prompt(left_anchor: str, right_edit: str) -> str:
+    """Python-side assembly: LLM fills left_anchor + right_edit, Python formats.
+
+    ICLoRAConcat triggers on split screen spatial anchoring.
+    The model was trained on this specific phrase to activate split-screen mode.
+    """
+    return (
+        f"A split screen image. On the left side, {left_anchor}. "
+        f"On the right side, {right_edit}."
+    )
+
+
+def assemble_edit_negative(negative_tags: str) -> str:
+    """Python-side negative prompt assembly.
+
+    Normalize: ensure base quality tags are always present.
+    """
+    BASE_NEGATIVE = "worst quality, low quality, score_1, score_2, score_3"
+    BODY_PROTECT = "bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face"
+    parts = [negative_tags.strip()] if negative_tags.strip() else []
+    for tag in [BASE_NEGATIVE, BODY_PROTECT]:
+        for t in tag.split(", "):
+            t = t.strip()
+            if t not in [p.strip() for p in parts]:
+                parts.append(t)
+    return ", ".join(parts)
+

@@ -39,6 +39,7 @@ from anima_agent.comfyui.schema_injector import (
 from anima_agent.comfyui.schema_fixer import fix_payload
 from anima_agent.comfyui.tagger import _default_widget_value
 from anima_agent.agent.react_agent import TUNE_PARAMS
+from anima_agent.agent.prompts import assemble_edit_prompt, assemble_edit_negative
 from anima_agent.tag_service import DanbooruTagService, TagQuery
 from anima_agent.task_tracker import TaskTracker, TaskStatus
 
@@ -363,8 +364,41 @@ class AgentPipeline:
             # 2.5 画质地板:补齐质量前缀与负向核心(程序化,防 LLM 漂移)
             self._enforce_quality_floor(draft, effective_workflow_id)
 
-            # 3. 重新组装 prompt_11
-            draft.args.prompt_11 = draft.three_layer.assemble()
+            # 3. Edit 模式:LLM 填槽 + Python 组装分屏 prompt
+            # 普通模式:重新组装 prompt_11
+            is_edit_workflow = bool(effective_workflow_id) and "edit" in effective_workflow_id
+            if is_edit_workflow:
+                # Edit 模式: draftsman 已通过 EDIT_MODE_SYSTEM 输出 left_anchor/right_edit/negative_tags
+                # Python 组装:prompt_2 = split screen + left_anchor + right_edit
+                left_anchor = draft.args.left_anchor or ""
+                right_edit = draft.args.right_edit or ""
+
+                if left_anchor and right_edit:
+                    # 正常流程:LLM 已输出 edit 字段
+                    draft.args.prompt_2 = assemble_edit_prompt(left_anchor, right_edit)
+                    draft.args.prompt_3 = assemble_edit_negative(draft.args.negative_tags or "")
+                    # prompt_11/12 供 schema_injector 兼容(edit 模式用 prompt_2/3)
+                    draft.args.prompt_11 = draft.args.prompt_2
+                    draft.args.prompt_12 = draft.args.prompt_3
+                    print(f"[pipeline] edit mode: left_anchor={left_anchor[:80]}")
+                    print(f"[pipeline] edit mode: right_edit={right_edit[:80]}")
+                    print(f"[pipeline] edit mode: prompt_2={draft.args.prompt_2[:120]}")
+                else:
+                    # 回退:LLM 没有输出 edit 字段,从 ref_tags 提取基础描述
+                    fallback = self._fallback_edit_args(ref_tags or "")
+                    draft.args.left_anchor = fallback["left_anchor"]
+                    draft.args.right_edit = fallback["right_edit"]
+                    draft.args.negative_tags = fallback["negative_tags"]
+                    draft.args.prompt_2 = assemble_edit_prompt(
+                        draft.args.left_anchor, draft.args.right_edit
+                    )
+                    draft.args.prompt_3 = assemble_edit_negative(draft.args.negative_tags)
+                    draft.args.prompt_11 = draft.args.prompt_2
+                    draft.args.prompt_12 = draft.args.prompt_3
+                    print(f"[pipeline] edit mode (fallback): {draft.args.prompt_2[:120]}")
+            else:
+                # 3. 重新组装 prompt_11
+                draft.args.prompt_11 = draft.three_layer.assemble()
 
             # 4. 自审:代码化硬约束
             t3 = time.monotonic()
@@ -564,6 +598,24 @@ class AgentPipeline:
         draft.three_layer.hard_tags.append(f"@{drew}")
         logger.info("random 兜底:补随机画师 @%s", drew)
         return draft
+
+    def _fallback_edit_args(self, ref_tags: str) -> dict:
+        """Edit 模式回退:当 LLM 调用失败时,从 WD14 tags 提取基本信息。"""
+        # 从 ref_tags 中提取 [wd14] 部分
+        left_anchor = ""
+        if "[wd14]" in ref_tags:
+            parts = ref_tags.split("[wd14]")
+            if len(parts) > 1:
+                wd14_part = parts[1].split("[")[0].strip()
+                left_anchor = wd14_part
+        if not left_anchor:
+            left_anchor = "a character image"
+
+        return {
+            "left_anchor": left_anchor,
+            "right_edit": "the character in a similar pose",
+            "negative_tags": "worst quality, low quality, bad anatomy",
+        }
 
     async def _validate_and_backfill(self, draft: DraftResult) -> DraftResult:
         """tag 校验:confirmed 回填 hard_tags,missing 转 nltags。"""

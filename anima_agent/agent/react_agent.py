@@ -158,6 +158,15 @@ class SimpleAgent:
     ) -> DraftResult:
         effective_nsfw = nsfw if nsfw is not None else self.nsfw
 
+        # Edit 模式检测:有参考图 + workflow 是 edit 工作流时走专用出稿
+        is_edit_mode = "edit" in workflow_id and ref_tags
+
+        if is_edit_mode:
+            # Edit 模式:从 ref_tags 提取 [wd14] 部分作为基础输入
+            wd14_tags = self._extract_wd14_tags(ref_tags or "")
+            return await self._draft_edit_mode(wd14_tags, user_prompt)
+
+        # Normal/Random 模式
         # Stage 1+2+3: NER 抽取 → 精确检索 → 拼音容错（前置翻译节点）
         from anima_agent.tag_service.cn_tag_resolver import resolve_cn_tags
 
@@ -361,6 +370,134 @@ class SimpleAgent:
                 "不要输出组装后的 prompt_11/prompt_12"
             )
         return out
+
+    def _extract_wd14_tags(self, ref_tags: str) -> str:
+        """从 ref_tags 中提取 [wd14] 部分的标签。"""
+        if "[wd14]" in ref_tags:
+            parts = ref_tags.split("[wd14]")
+            if len(parts) > 1:
+                wd14_part = parts[1].split("[")[0].strip()
+                return wd14_part
+        return ref_tags.strip()
+
+    async def _draft_edit_mode(self, wd14_tags: str, user_intent: str) -> DraftResult:
+        """Edit 模式出稿:调用 LLM 生成 left_anchor/right_edit/negative_tags。
+
+        Edit 模式不走 normal 三层 prompt,直接从 ref_tags 中提取 WD14 tags,
+        配合用户意图调用 LLM 生成编辑参数。
+
+        如果 LLM 返回格式不对,回退到基础描述。
+        """
+        import json
+        from anima_agent.agent.prompts import generate_edit_prompts
+        from anima_agent.agent.utils import extract_json
+
+        msgs = generate_edit_prompts(wd14_tags, user_intent)
+        messages = msgs["messages"]
+
+        # 调用 LLM 生成 edit 参数
+        system_prompt = messages[0]["content"]
+        user_prompt = messages[-1]["content"]
+
+        resp = await maybe_await(self.llm_complete(system_prompt, user_prompt))
+
+        # 解析 LLM 输出
+        data = extract_json(resp)
+        if not data:
+            logger.warning("edit 模式 LLM 返回无法解析为 JSON,使用回退描述")
+            return self._fallback_edit_draft(wd14_tags, user_intent)
+
+        args_data = dict(data.get("args") or {})
+        if not args_data.get("left_anchor") or not args_data.get("right_edit"):
+            logger.warning("edit 模式 LLM 输出缺少 left_anchor 或 right_edit 字段,使用回退描述")
+            return self._fallback_edit_draft(wd14_tags, user_intent, args_data)
+
+        # 构建 Edit 模式的 DraftResult
+        from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
+
+        brief = VisualBrief(
+            subject="edit subject",
+            scene_container="original scene",
+            action_relation="standing",
+            camera="upper body",
+            view_angle="eye-level",
+            canvas=(1152, 1536),
+            light_direction="ambient light",
+            subject_ratio="medium",
+            situation_cause_chain="",
+        )
+        three = ThreeLayerPrompt(hard_tags=[], soft_phrases=[], nltags_block="")
+
+        # 默认字段
+        args_data.setdefault("width", 1152)
+        args_data.setdefault("height", 1536)
+        args_data.setdefault("batch_size", 5)
+        args_data.setdefault("steps", 8)
+        args_data.setdefault("rtx_vsr_quality", "ULTRA")
+        if not args_data.get("filename_prefix"):
+            args_data["filename_prefix"] = "anima/edit"
+
+        args = AnimaArgs(**args_data)
+        tag_queries = data.get("tag_queries", [])
+
+        return DraftResult(
+            intent="edit",
+            brief=brief,
+            three_layer=three,
+            args=args,
+            tag_queries=tag_queries,
+        )
+
+    def _fallback_edit_draft(
+        self, wd14_tags: str, user_intent: str, args_data: Optional[dict] = None
+    ) -> DraftResult:
+        """Edit 模式回退:当 LLM 调用失败时,从 WD14 tags 提取基本信息。"""
+        from anima_agent.agent.prompts import assemble_edit_prompt, assemble_edit_negative
+        from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
+
+        left_anchor = wd14_tags if wd14_tags else "a character image"
+        right_edit = f"the character with: {user_intent}" if user_intent else "the character in a similar pose"
+        negative_tags = "worst quality, low quality, bad anatomy"
+
+        # Python 组装:prompt_2 = split screen + left_anchor + right_edit
+        prompt_2 = assemble_edit_prompt(left_anchor, right_edit)
+        prompt_3 = assemble_edit_negative(negative_tags)
+
+        brief = VisualBrief(
+            subject="edit subject",
+            scene_container="original scene",
+            action_relation="standing",
+            camera="upper body",
+            view_angle="eye-level",
+            canvas=(1152, 1536),
+            light_direction="ambient light",
+            subject_ratio="medium",
+            situation_cause_chain="",
+        )
+        three = ThreeLayerPrompt(hard_tags=[], soft_phrases=[], nltags_block="")
+
+        # 从 args_data 提取已有字段,补充缺失字段
+        final_args = dict(args_data) if args_data else {}
+        final_args.setdefault("prompt_11", prompt_2)
+        final_args.setdefault("prompt_12", prompt_3)
+        final_args.setdefault("left_anchor", left_anchor)
+        final_args.setdefault("right_edit", right_edit)
+        final_args.setdefault("negative_tags", negative_tags)
+        final_args.setdefault("width", 1152)
+        final_args.setdefault("height", 1536)
+        final_args.setdefault("batch_size", 5)
+        final_args.setdefault("steps", 8)
+        final_args.setdefault("rtx_vsr_quality", "ULTRA")
+        final_args.setdefault("filename_prefix", "anima/edit")
+
+        args = AnimaArgs(**final_args)
+        return DraftResult(
+            intent="edit",
+            brief=brief,
+            three_layer=three,
+            args=args,
+            tag_queries=[],
+        )
 
     @staticmethod
     def _coerce_brief(raw) -> dict:

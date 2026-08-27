@@ -2,12 +2,33 @@
   "description": "",
   "enabled": true,
   "parameters": {
+    "left_anchor": {
+      "node_id": "2",
+      "field": "left_anchor",
+      "required": false,
+      "type": "string",
+      "description": "Edit left side anchor (original image description)"
+    },
+    "right_edit": {
+      "node_id": "2",
+      "field": "right_edit",
+      "required": false,
+      "type": "string",
+      "description": "Edit right side new state (what to generate)"
+    },
     "prompt_2": {
       "node_id": "2",
       "field": "text",
       "required": true,
       "type": "string",
-      "description": "Edit positive prompt (what to generate on the left side)"
+      "description": "Edit positive prompt (assembled: split screen + left anchor + right edit)"
+    },
+    "negative_tags": {
+      "node_id": "3",
+      "field": "negative_tags",
+      "required": false,
+      "type": "string",
+      "description": "Edit negative tags (old features to suppress)"
     },
     "prompt_3": {
       "node_id": "3",

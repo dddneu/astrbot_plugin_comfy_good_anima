@@ -162,6 +162,17 @@ class AnimaArgs(BaseModel):
     ref_train_network_dim: Optional[int] = None      # 训练网络维度/rank(0=自动;复杂首饰/纹理 → 64~128)
     ref_train_steps: Optional[int] = None            # 训练步数(0=默认;强烈画风转换/细节极多 → 150~200)
 
+    # Edit 模式字段(ICLoRAConcat 分屏编辑;LLM 填槽 + Python 组装)
+    # left_anchor/right_edit 由 LLM 填槽,Python assemble_edit_prompt() 拼接为 prompt_2
+    left_anchor: Optional[str] = None    # 左侧原图锚点(客观描述)
+    right_edit: Optional[str] = None     # 右侧新状态(灵活描述)
+    negative_tags: Optional[str] = None  # 负向 tag(LLM 填槽,Python 拼接)
+    # Edit 模式专用:prompt_2 = 组装后的分屏正向 prompt(注入 ComfyUI node 2)
+    # prompt_3 = 组装后的分屏负向 prompt(注入 ComfyUI node 3)
+    # 普通模式下 prompt_2/prompt_3 未使用,统一用 prompt_11/prompt_12
+    prompt_2: Optional[str] = None
+    prompt_3: Optional[str] = None
+
     def to_args_dict(self) -> dict:
         d = self.model_dump()
         return {k: v for k, v in d.items() if v is not None}

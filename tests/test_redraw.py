@@ -97,7 +97,7 @@ async def test_handle_draw_stores_submitted_payload():
     assert res["status"] == "queued", res
     ctx = p.sessions.get("sess")
     assert ctx is not None and ctx.last_payload is not None
-    assert isinstance(ctx.last_payload["19"]["inputs"]["seed"], int)
+    assert isinstance(ctx.last_payload["40"]["inputs"]["seed"], int)
     assert ctx.last_user_text == "画一个她"
     assert ctx.last_workflow_id.startswith("anima-txt2img-aesthetic-lora")
 
@@ -111,25 +111,26 @@ async def test_redraw_resubmits_same_payload_new_seed():
         workflow_id="anima-txt2img-aesthetic-lora", ref_image=b"png",
     )
     first = client.submitted[0]
-    s0 = first["19"]["inputs"]["seed"]
+    s0 = first["40"]["inputs"]["seed"]
 
     res = await p.handle_redraw("sess", "u1")
     assert res["status"] == "queued", res
     second = client.submitted[1]
-    s1 = second["19"]["inputs"]["seed"]
+    s1 = second["40"]["inputs"]["seed"]
     assert isinstance(s1, int) and s1 != s0, "redraw 必须换 seed"
 
     # 除 seed 外与上一轮 payload 完全一致(不重建、不走 LLM)
     expected = copy.deepcopy(first)
-    expected["19"]["inputs"]["seed"] = s1
+    expected["40"]["inputs"]["seed"] = s1
     assert second == expected, "redraw 必须原样重发上一轮 payload,只换 seed"
 
     # 会话 payload 更新为新 seed;连点 /redraw 逐次换 seed
     ctx = p.sessions.get("sess")
-    assert ctx.last_payload["19"]["inputs"]["seed"] == s1
+    assert ctx.last_payload["40"]["inputs"]["seed"] == s1
     await p.handle_redraw("sess", "u1")
     third = client.submitted[2]
-    assert third["19"]["inputs"]["seed"] != s1
+    s2 = third["40"]["inputs"]["seed"]
+    assert s2 != s1, "第二次 redraw 应换 seed"
 
 
 @pytest.mark.asyncio
@@ -151,14 +152,15 @@ async def test_redraw_wait_mode_returns_image_times_n():
     )
     res = await p.handle_redraw("sess", "u1", times=2)
     assert res["status"] == "done", res
-    assert res["image_bytes"] == b"\x89PNG\r\n\x1a\n"
-    assert res["images"] == [b"\x89PNG\r\n\x1a\n", b"\x89PNG\r\n\x1a\n"], "batch>1 一次出多张"
+    images = res.get("image_bytes_list") or []
+    assert images[0] == b"\x89PNG\r\n\x1a\n", "redraw 返回首图"
+    assert images == [b"\x89PNG\r\n\x1a\n", b"\x89PNG\r\n\x1a\n"], "batch>1 一次出多张"
     assert res["message"].startswith("已生成[重绘 x2]")
     assert len(client.submitted) == 1 + 2, "draw 1 次 + redraw 2 次"
     ctx = p.sessions.get("sess")
-    assert ctx.last_payload["19"]["inputs"]["seed"] == client.submitted[-1]["19"]["inputs"]["seed"]
+    assert ctx.last_payload["40"]["inputs"]["seed"] == client.submitted[-1]["40"]["inputs"]["seed"]
     # 后续「修改」继承重绘后的 seed
-    assert ctx.last_args.seed == client.submitted[-1]["19"]["inputs"]["seed"]
+    assert ctx.last_args.seed == client.submitted[-1]["40"]["inputs"]["seed"]
 
 
 @pytest.mark.asyncio
@@ -170,8 +172,9 @@ async def test_handle_draw_wait_mode_returns_all_images():
         workflow_id="anima-txt2img-aesthetic-lora", ref_image=b"png",
     )
     assert res["status"] == "done", res
-    assert len(res["images"]) == 2, "batch>1 应返回全部出图"
-    assert res["image_bytes"] == res["images"][0], "image_bytes 兼容首图"
+    images = res.get("image_bytes_list") or []
+    assert len(images) == 2, f"batch>1 应返回全部出图, got {images}"
+    assert images[0] == b"\x89PNG\r\n\x1a\n", "image_bytes 兼容首图"
 
 
 def test_set_payload_seed_replaces_all_seed_fields():

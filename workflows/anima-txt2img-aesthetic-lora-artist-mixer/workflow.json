@@ -69,7 +69,7 @@
   "44": {
     "class_type": "AnimaBoosterLoader",
     "inputs": {
-      "model_name": "anima-turbo-v1.1.safetensors",
+      "model_name": "anima-preview3-base.safetensors",
       "sage_attention": "auto",
       "torch_compile": true
     }
