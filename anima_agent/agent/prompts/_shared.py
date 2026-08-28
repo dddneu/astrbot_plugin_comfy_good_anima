@@ -34,19 +34,78 @@ FRAG_BODY_PROTECT = (
 )
 
 
-def assemble_negative(extra_tags: str = "") -> str:
-    """组装负向 prompt（Python 层自动追加基础保护）。
+def _normalize_tag_list(value: object) -> str:
+    """将 str / list / tuple 统一成逗号分隔字符串。"""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item).strip() for item in value if str(item).strip())
+    return str(value).strip()
+
+
+def assemble_negative(
+    base_negative: str = "",
+    hard_tags: str | list[str] = "",
+    soft_phrases: str | list[str] = "",
+) -> str:
+    """Python 端强制质量控制与防呆拦截。
+
+    小模型只负责 IF-THEN 语义互斥；这里用代码保证：
+    - 核心负向词永远存在
+    - 按画面类型追加负向
+    - 用代码替代 E001-E011 的 LLM 记忆负担
 
     Args:
-        extra_tags: 额外的负向 tag
+        base_negative: LLM 已生成的负向 prompt / 旧特征负向词
+        hard_tags: 正向 hard_tags（用于触发按画面追加）
+        soft_phrases: 正向 soft_phrases（用于触发按画面追加）
     """
-    parts = [extra_tags.strip()] if extra_tags.strip() else []
-    for tag in [FRAG_NEGATIVE_BASE, FRAG_BODY_PROTECT]:
-        for t in tag.split(", "):
+    parts = [base_negative.strip()] if base_negative.strip() else []
+
+    # 1. 核心底线（绝对不可篡改）
+    for tag_group in [FRAG_NEGATIVE_BASE, FRAG_BODY_PROTECT]:
+        for t in tag_group.split(","):
             t = t.strip()
-            if t not in [p.strip() for p in parts]:
+            if t and t not in [p.strip() for p in parts]:
                 parts.append(t)
-    return ", ".join(parts)
+
+    combined_positive = (
+        _normalize_tag_list(hard_tags) + " " + _normalize_tag_list(soft_phrases)
+    ).lower()
+
+    # 2. 替代 LLM 读取 Markdown 表格：按画面类型追加负向
+    if any(kw in combined_positive for kw in ["close-up", "close up", "face", "portrait"]):
+        parts.extend(["bad eyes", "asymmetrical eyes", "deformed face", "blurry face"])
+
+    if any(kw in combined_positive for kw in ["full body", "full_body", "standing"]):
+        parts.extend(["extra limbs", "missing limbs", "disconnected limbs"])
+
+    if any(kw in combined_positive for kw in ["holding", "sword", "gun", "hand"]):
+        parts.extend(["fused fingers", "fused hands", "malformed hands"])
+
+    if any(kw in combined_positive for kw in ["2girls", "2boys", "multiple", "couple"]):
+        parts.extend(["merged bodies", "extra arms", "extra hands", "cloned face", "twins"])
+
+    # 3. 替代 LLM 执行 FAILURE_PATTERNS (E001-E011 防呆)
+    # E003: 极端透视防护
+    if any(kw in combined_positive for kw in ["from below", "from above", "extreme", "dynamic angle"]):
+        parts.extend(["bad perspective", "broken joints", "distorted face"])
+
+    # E005: 景深与背景冲突处理
+    if any(kw in combined_positive for kw in ["depth of field", "bokeh", "blurry background"]):
+        parts = [p for p in parts if p != "blurry"]
+        parts.extend(["blurry face", "blurry subject"])
+
+    # 去重并返回
+    seen = set()
+    final_parts = []
+    for p in parts:
+        p = p.strip()
+        if p and p not in seen:
+            seen.add(p)
+            final_parts.append(p)
+
+    return ", ".join(final_parts)
 
 
 # ──────────────────────────────────────────────────────────────────

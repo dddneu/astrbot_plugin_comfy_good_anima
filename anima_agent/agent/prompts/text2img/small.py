@@ -78,46 +78,23 @@ CREATIVE_RULES = """# 构图与创意规则（填空版）
 - 裸模型：`masterpiece, best quality, score_7, safe`
 """
 
-UNIVERSAL_RULES = """# 通用质量与校验规则（所有模式必须遵守）
+UNIVERSAL_RULES = """# CRITICAL RULES
+=== UNIVERSAL QUALITY & CONFLICT RULES ===
+1. CONFLICT CHECKING (CRITICAL):
+   - ONLY ONE subject count: Never mix "solo" with "2girls" or "multiple boys".
+   - ONLY ONE camera angle: Never mix "close-up" with "full body".
+   - ONLY ONE lighting direction: If using "backlighting", you MUST add "rim light" or "face fill light".
+   - ONLY ONE environment: Do not mix "indoor lighting" with "outdoors".
 
-## 负向组装（必选）
-`worst quality, low quality, score_1, score_2, score_3, watermark, logo`
+2. ANATOMY & NEGATIVE PROMPT (STRICT FORMAT):
+   - Your `negative_tags` MUST ALWAYS start with this exact string:
+     "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body".
+   - IF the intent mentions "hands", "holding", or "action", append: ", fused fingers, malformed hands, broken joints".
+   - IF the intent has multiple characters, append: ", merged bodies, cloned face, extra limbs".
 
-## 身体保护（必选）
-`bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs`
-
-## 按画面追加负向
-- 头像/半身：`bad eyes, asymmetrical eyes, deformed face, blurry face`
-- 全身/动作：`extra limbs, missing limbs, disconnected limbs, broken joints`
-- 多人近距离：`merged bodies, extra arms, extra hands, cloned face`
-- 手部特写：`fused fingers, fused hands, malformed hands`
-- 背景虚化：使用 `blurry face, blurry subject`，不要使用全局 `blurry`
-
-## 冲突检查（输出前自查）
-- solo vs 多人：选一个
-- close-up vs full body：选一个景别
-- from above vs from below：选一个视角
-- closed eyes vs looking at viewer：选一个视线
-- 裸体 vs 服装：选一个着装状态
-- 室内光源 vs 室外背景：光源和背景必须一致
-- 背光：补 `face fill light` 或 `rim light`
-- 多角色：发色、服装、动作必须绑定具体角色，不能串位
-
-## Tag 校验边界
-你只负责产出 hard_tags 候选，最终是否 confirmed 由 tag 校验服务决定。
-- confirmed 才保留；missing 转为 soft_phrases 或 nltags_block
-- 不要伪造 Danbooru tag，不确定的描述放 soft_phrases 或 nltags_block
-- `newest`、`year XXXX` 等年代控制词无需校验，可直接放 hard_tags
-
-## 画师规则
-- 普通 prompt 写 `@artist name`（不加 @ 效果极弱）
-- 画师融合：artist_chain 不带 @，prompt_11 不重复画师名
-- 同一张非融合图只放 1 个 @artist
-
-## 最终检查
-- hard_tags 只放离散词，不放完整句子
-- nltags_block 必须以 `Place` 或 `Use` 开头
-- prompt_12 必须包含核心负向词和身体保护词
+3. OUTPUT CHECK:
+   - hard_tags must be discrete tags, never full sentences.
+   - nltags_block must start with "Place" or "Use".
 """
 
 TUNE_PARAMS = """## 精细调参指南（args 字段）
@@ -139,31 +116,6 @@ TUNE_PARAMS = """## 精细调参指南（args 字段）
 | `fls_layer_filter` | "" | 底层构图好但高频层不够 | `OUT` |
 | `fls_step_decay` | 0.0 | 需要前期强引导后期自由生成 | 0.1–0.3 |
 
-### IP-Adapter / InstantReferenceLoRA 调参（参考图工作流）
-
-| 参数 | 默认值 | 何时用 | 推荐范围 |
-|------|--------|--------|----------|
-| `ip_adapter_strength` | 1.0 | 面部过强/衣服被拉偏 | 0.6–0.75 |
-| `ip_adapter_end_at` | 0.45 | IP-Adapter 影响时间过长导致衣服/场景被污染 | 0.3–0.4 |
-| `ip_adapter_layer_filter` | "" | 只在高频层注入 | `OUT` |
-| `ip_adapter_ip_cfg_scale` | 4.0 | 参考图特征不够显著 | 5.0–7.0 |
-| `instantref_model_strength` | 1.2 | 参考身份/细节约束弱(人物不够像)→ 提高;姿态被焊死 → 降低 | 1.3–1.5 |
-| `instantref_clip_strength` | 1.35 | 参考画风/语义弱(画风不够像)→ 提高 | 1.4–1.5 |
-| `instantref_start_at` | 0.35 | 参考约束弱,想让 InstantRef 更早接管 | 0.2–0.35 |
-| `instantref_layer_filter` | "" | 只在高频层注入防宏观构图被干扰 | `OUT` |
-
-### 参考图炼丹调参（InstantReferenceLoRA 的 tagging/train 节点，仅参考图工作流）
-
-| 参数 | 默认值 | 何时用 | 推荐范围 |
-|------|--------|--------|----------|
-| `ref_tag_exclude` | "" | 把身份特征焊死进角色(1girl/solo/looking at viewer/发色/瞳色);**绝不能放衣服/动作/背景**(打标悖论:不打标=烤进角色,换装脱不下来) | 逗号分隔身份词 |
-| `ref_tag_prepend` | "" | 让临时 LoRA 自带画风:填 [wd14] 技法 tag / 画师名(用户没提改画风时) | 逗号分隔画风词 |
-| `ref_tag_append` | "" | 追加画风词 | 逗号分隔画风词 |
-| `ref_tag_general_threshold` | 0.35 | 角色首饰/纹理极复杂,想捕获更多细节词 | 0.25–0.35 |
-| `ref_tag_character_threshold` | 0.85 | 角色身份 tag 严格度 | 0.8–0.9 |
-| `ref_train_network_dim` | 0(自动) | 复杂首饰/刺绣/纹理复刻不足 | 32–128 |
-| `ref_train_steps` | 0(默认) | 强烈画风转换/原图细节极多 | 150–200 |
-
 ### 负面排斥词（所有工作流）
 
 `negative_repel` 追加到负面提示词，利用 CFG 排斥力逼迫模型生成复杂纹理：
@@ -184,20 +136,9 @@ TUNE_PARAMS = """## 精细调参指南（args 字段）
 ```
 """
 
-FAILURE_PATTERNS = """# 4. Anima 特有失败模式（出稿前对照画面自查）
-以下每条都是 Anima 模型的高频失败，组装 prompt 时必须主动规避：
-
-- E001 单人主体太小：主体占比控制在 40-60%，用 upper body / cowboy shot 控制景别
-- E002 双人互不相关：至少定义视线接触 / 手部接触 / 共享道具
-- E003 透视脸部变形：仰视/俯视用 slight low angle 代替 extreme low angle
-- E004 前景挡主角脸：三人以上时主角放中景，前景只露肩膀/背影
-- E005 背景抢戏：背景 tag 越少越好；需要时用 simple dark background + rim light 压住
-- E006 切线粘连：角色轮廓与背景线条相切时，要么明确重叠，要么留空隙
-- E007 光源方向不连续：一个场景只定义一个光源方向；背光必须补 fill light
-- E008 三人以上肢体归属混乱：nltags 写死每个人的手在谁身上
-- E009 表情与场景不匹配：检查场景情绪→表情一致性
-- E010 人物与环境比例失调：全身+场景时用参照物写死比例
-- E011 极端比例解剖崩坏：极端比例与写实解剖冲突时选其一
+FAILURE_PATTERNS = """# 防呆规则
+复杂失败模式（E 系列）已由 Python 后置处理自动追加负面词。
+LLM 只需遵守上方 IF-THEN 互斥规则，不需要记忆错误码。
 """
 
 JSON_SKELETON = """# 输出格式

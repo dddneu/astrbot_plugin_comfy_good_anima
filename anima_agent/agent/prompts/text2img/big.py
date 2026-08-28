@@ -179,31 +179,6 @@ TUNE_PARAMS = """## 精细调参指南（args 字段）
 | `fls_layer_filter` | "" | 底层构图好但高频层不够 | `OUT` |
 | `fls_step_decay` | 0.0 | 需要前期强引导后期自由生成 | 0.1–0.3 |
 
-### IP-Adapter / InstantReferenceLoRA 调参（参考图工作流）
-
-| 参数 | 默认值 | 何时用 | 推荐范围 |
-|------|--------|--------|----------|
-| `ip_adapter_strength` | 1.0 | 面部过强/衣服被拉偏 | 0.6–0.75 |
-| `ip_adapter_end_at` | 0.45 | IP-Adapter 影响时间过长导致衣服/场景被污染 | 0.3–0.4 |
-| `ip_adapter_layer_filter` | "" | 只在高频层注入 | `OUT` |
-| `ip_adapter_ip_cfg_scale` | 4.0 | 参考图特征不够显著 | 5.0–7.0 |
-| `instantref_model_strength` | 1.2 | 参考身份/细节约束弱(人物不够像)→ 提高;姿态被焊死 → 降低 | 1.3–1.5 |
-| `instantref_clip_strength` | 1.35 | 参考画风/语义弱(画风不够像)→ 提高 | 1.4–1.5 |
-| `instantref_start_at` | 0.35 | 参考约束弱,想让 InstantRef 更早接管 | 0.2–0.35 |
-| `instantref_layer_filter` | "" | 只在高频层注入防宏观构图被干扰 | `OUT` |
-
-### 参考图炼丹调参（InstantReferenceLoRA 的 tagging/train 节点，仅参考图工作流）
-
-| 参数 | 默认值 | 何时用 | 推荐范围 |
-|------|--------|--------|----------|
-| `ref_tag_exclude` | "" | 把身份特征焊死进角色(1girl/solo/looking at viewer/发色/瞳色);**绝不能放衣服/动作/背景**(打标悖论:不打标=烤进角色,换装脱不下来) | 逗号分隔身份词 |
-| `ref_tag_prepend` | "" | 让临时 LoRA 自带画风:填 [wd14] 技法 tag / 画师名(用户没提改画风时) | 逗号分隔画风词 |
-| `ref_tag_append` | "" | 追加画风词 | 逗号分隔画风词 |
-| `ref_tag_general_threshold` | 0.35 | 角色首饰/纹理极复杂,想捕获更多细节词 | 0.25–0.35 |
-| `ref_tag_character_threshold` | 0.85 | 角色身份 tag 严格度 | 0.8–0.9 |
-| `ref_train_network_dim` | 0(自动) | 复杂首饰/刺绣/纹理复刻不足 | 32–128 |
-| `ref_train_steps` | 0(默认) | 强烈画风转换/原图细节极多 | 150–200 |
-
 ### 负面排斥词（所有工作流）
 
 `negative_repel` 追加到负面提示词，利用 CFG 排斥力逼迫模型生成复杂纹理：

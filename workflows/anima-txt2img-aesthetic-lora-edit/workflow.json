@@ -110,7 +110,7 @@
       "model_patch": ["39", 0],
       "image": ["18", 0],
       "mask": ["18", 2],
-      "strength": 1.0,
+      "strength": 0.8,
       "start_percent": 0,
       "end_percent": 1.0
     }

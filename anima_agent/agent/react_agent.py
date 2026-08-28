@@ -379,6 +379,16 @@ class SimpleAgent:
             args_data["prompt_11"] = three.assemble()
         if not args_data.get("prompt_12"):
             args_data["prompt_12"] = self._default_negative(three)
+
+        # Python 后置防呆：无论 LLM 是否漏写，强制注入核心负向 + 按画面追加 + E 系列防呆
+        from anima_agent.agent.prompts._shared import assemble_negative
+
+        args_data["prompt_12"] = assemble_negative(
+            base_negative=args_data.get("prompt_12", ""),
+            hard_tags=three.hard_tags,
+            soft_phrases=three.soft_phrases,
+        )
+
         if not args_data.get("filename_prefix"):
             args_data["filename_prefix"] = self._default_filename_prefix(
                 brief, three, artist_chain=args_data.get("artist_chain")

@@ -35,9 +35,9 @@ def test_txt2img_prompt_has_model_specific_universal_rules():
     small = build_draftsman_prompt(model_size="small")
     big = build_draftsman_prompt(model_size="big")
 
-    assert "按画面追加负向" in small
-    assert "发色、服装、动作必须绑定具体角色，不能串位" in small
-    assert "E001" in small
+    assert "UNIVERSAL QUALITY & CONFLICT RULES" in small
+    assert "negative_tags" in small
+    assert "E001" not in small
     assert "精细调参指南" in small
     assert "E001" in big
     assert "精细调参指南" in big
