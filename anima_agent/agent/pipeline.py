@@ -331,7 +331,7 @@ class AgentPipeline:
             # 2.3.1 参考图模式:锚定 WD14 画师元 tag(@wlop / drawn by xxx)
             draft = await self._anchor_ref_artists(draft, effective_workflow_id)
 
-            # 2.3.2 编辑模式:校验 non-artist tag_queries(danbooru 确认)→回填 character_dna_tags
+            # 2.3.2 编辑模式:校验 non-artist tag_queries(danbooru 确认)→回填 retained_tags
             draft = await self._validate_edit_tag_queries(draft, effective_workflow_id)
 
             # 2.4 兜底:LLM 把 random 判成 intent=random 但没写画师 → 补一个随机画师

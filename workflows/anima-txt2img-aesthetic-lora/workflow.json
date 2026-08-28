@@ -10,7 +10,7 @@
   "44": {
     "class_type": "AnimaBoosterLoader",
     "inputs": {
-      "model_name": "anima-preview3-base.safetensors",
+      "model_name": "anima-base-v1.0.safetensors",
       "sage_attention": "auto",
       "torch_compile": true
     }
@@ -118,7 +118,7 @@
     "class_type": "AnimaTeaCache",
     "inputs": {
       "model": [
-        "65",
+        "64",
         0
       ],
       "threshold": 0.15,
@@ -149,7 +149,7 @@
         "62",
         0
       ],
-      "lora_name": "anima-preview-3-masterpieces-v5.safetensors",
+      "lora_name": "anima-base-1-masterpiece-v51.safetensors",
       "strength_model": 1.0
     }
   },
@@ -160,7 +160,7 @@
         "63",
         0
       ],
-      "lora_name": "anima-turbo-lora-v0.1.safetensors",
+      "lora_name": "anima-turbo-lora-v0.2.safetensors",
       "strength_model": 0.7
     }
   },
@@ -171,7 +171,7 @@
         "64",
         0
       ],
-      "lora_name": "anima-turbo-lora-v0.2.safetensors",
+      "lora_name": "anima-turbo-lora-v0.1.safetensors",
       "strength_model": 0.7
     }
   }

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-
 # ──────────────────────────────────────────────────────────────────
 # 1. 安全审查（最先，决定能不能做）
 # ──────────────────────────────────────────────────────────────────
@@ -609,7 +608,9 @@ def build_draftsman_prompt(
     if workflow_id and "edit" in workflow_id:
         # edit 模式：全场景指令 + 通用底线规则（跳过创意规则）
         parts.append(EDIT_MODE_SYSTEM)
-        parts.append(DRAFTSMAN_UNIVERSAL_RULES)  # 底线规则：负向/冲突检查/Tag校验
+        parts.append(
+            DRAFTSMAN_UNIVERSAL_RULES
+        )  # 底线规则：负向/冲突检查/Tag校验
         parts.append(EDIT_MODE_TUNE_PARAMS)
         parts.append(EDIT_MODE_FEW_SHOT)
         parts.append(EDIT_MODE_JSON_SKELETON)
@@ -621,7 +622,9 @@ def build_draftsman_prompt(
 
     # 4. 通用出稿规则
     parts.append(DRAFTSMAN_CREATIVE_RULES)  # 创意规则：情境/八维/三层/画布
-    parts.append(DRAFTSMAN_UNIVERSAL_RULES)  # 底线规则：负向/冲突检查/Tag校验/画师
+    parts.append(
+        DRAFTSMAN_UNIVERSAL_RULES
+    )  # 底线规则：负向/冲突检查/Tag校验/画师
 
     # 5. 精细调参指南（参考图/普通模式）
     parts.append(TUNE_PARAMS_GUIDE)
@@ -667,7 +670,9 @@ RULES:
 2. character_dna_tags (CRITICAL - ABSOLUTE PRIORITY): Extract ONLY the core character identity tags. Examples: silver_hair, blue_eyes, twin_tails, hair_ornament. MAXIMUM 3-8 tags. NO clothing, NO environment, NO minor objects. This tag group goes first in the final prompt to lock character identity against the reference image. Drop ALL other tags here!
 3. edited_tags: Extract core items the user wants to ADD or CHANGE into discrete tags. Example: if changing clothes → 'winter jacket, ski goggles'; if changing background → 'cyberpunk city, night'. Do NOT include style tags here (those go in style_modifiers). Python wraps these in (tag:1.1) automatically.
 4. negative_tags: MUST include the exact old tags being replaced. Always include: worst quality, low quality.
-5. style_modifiers: Put requested art styles or artists here (e.g., 'watercolor, @ask')."""
+5. style_modifiers: Put requested art styles or artists here (e.g., 'watercolor, @ask').
+6. NO tagger person names: WD14 taggers frequently hallucinate random character/person names from dataset contamination — e.g., 'hatsune miku', 'reimu', 'asuka'. NEVER trust any person/character name found in the WD14 tags; these are almost always noise. Only include a specific name if the USER explicitly requests it or puts it in `tag_queries`. When in doubt, drop it entirely.
+"""
 
     few_shot_messages = [
         {
@@ -684,9 +689,9 @@ RULES:
                         "character_dna_tags": "1girl, solo, silver_hair, blue_eyes",
                         "edited_tags": "cyberpunk city, night, neon lights",
                         "negative_tags": "outdoors, tree, sunny, day, nature, worst quality, low quality",
-                        "style_modifiers": "cyberpunk style"
+                        "style_modifiers": "cyberpunk style",
                     },
-                    "tag_queries": []
+                    "tag_queries": [],
                 },
                 indent=2,
             ),
@@ -705,9 +710,9 @@ RULES:
                         "character_dna_tags": "1girl, solo, short_hair",
                         "edited_tags": "winter jacket, ski goggles, thick clothes",
                         "negative_tags": "black_t-shirt, blue_jeans, short_sleeves, worst quality, low quality",
-                        "style_modifiers": ""
+                        "style_modifiers": "",
                     },
-                    "tag_queries": []
+                    "tag_queries": [],
                 },
                 indent=2,
             ),
@@ -716,7 +721,12 @@ RULES:
 
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(few_shot_messages)
-    messages.append({"role": "user", "content": f"WD14 Tags: {wd14_tags}\nIntent: {user_intent}"})
+    messages.append(
+        {
+            "role": "user",
+            "content": f"WD14 Tags: {wd14_tags}\nIntent: {user_intent}",
+        }
+    )
     return {"messages": messages}
 
 
@@ -745,7 +755,8 @@ def assemble_edit_prompt(
 
     # 1. 自然语言空间锚定 — 左右分屏定位
     parts.append(
-        f"A split screen image. On the left side, {left_anchor.strip()} "
+        "A split screen image. "
+        f"On the left side, {left_anchor.strip()} "
         f"On the right side, {right_edit.strip()} "
     )
 
