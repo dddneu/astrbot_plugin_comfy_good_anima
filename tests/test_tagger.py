@@ -474,16 +474,17 @@ def test_draftsman_prompt_has_tagging_paradox_rule():
     assert "exclude 只放身份特征" in prompt
 
 
-def test_draftsman_user_message_has_tagging_paradox_rule():
-    """出稿用户消息必须注入打标悖论(换装时绝不把旧衣服写进 ref_tag_exclude)。"""
+def test_draftsman_user_message_is_slim_data_only():
+    """出稿用户消息只保留客观数据；打标悖论/炼丹参数等规则已移到 System Prompt。"""
     from anima_agent.agent.react_agent import SimpleAgent
 
     ref_tags = "[wd14] 1girl, white dress, ribbon\n[vlm] long silver hair, blue eyes"
     msg = SimpleAgent(lambda s, u: "")._build_user_message("把她的裙子换成校服", None, None, ref_tags, None)
-    assert "ref_tag_exclude" in msg, "炼丹参数应注入用户消息"
-    assert "打标悖论" in msg, "打标悖论规则应注入用户消息"
-    assert "烤进角色" in msg, "应说明不打标会被烤进角色"
-    assert "ref_train_network_dim" in msg
+    assert "【用户最终意图】" in msg
+    assert "【参考图 WD14 标签】" in msg
+    assert "ref_tag_exclude" not in msg, "炼丹参数不应注入用户消息"
+    assert "打标悖论" not in msg, "规则不应注入用户消息"
+    assert "ref_train_network_dim" not in msg
 
 
 def test_draftsman_prompt_injects_armor_break_first():

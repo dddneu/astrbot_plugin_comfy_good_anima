@@ -25,6 +25,20 @@ logger = logging.getLogger(__name__)
 
 MAX_PARSE_RETRIES = 2
 
+# 意图蒸馏 Prompt 统一放在 prompts/distill 下，按 text2img / edit 分类管理
+from anima_agent.agent.prompts.distill import (
+    INTENT_DISTILLER_SYSTEM,
+    DISTILLER_FEW_SHOTS,
+    INTENT_DISTILLER_SYSTEM_WITH_SHOTS,
+    EDIT_INTENT_DISTILLER_SYSTEM,
+    EDIT_DISTILLER_FEW_SHOTS,
+    EDIT_INTENT_DISTILLER_SYSTEM_WITH_SHOTS,
+    restore_entity_placeholders,
+)
+
+# 兼容旧常量名
+SMALL_MODEL_DISTILL_SYSTEM = INTENT_DISTILLER_SYSTEM_WITH_SHOTS
+
 
 class SafetyReject(Exception):
     """安全审查拒绝:LLM 输出了 reject,直接终止出稿不 retry。"""
@@ -216,9 +230,85 @@ class SimpleAgent:
         if is_edit_mode:
             # Edit 模式:从 ref_tags 提取 [wd14] 部分作为基础输入
             wd14_tags = self._extract_wd14_tags(ref_tags or "")
+            # Edit 模式小模型预蒸馏：Tag 堆砌 / 短句 / 口语化输入 → 明确修改指令
+            if effective_model_size == "small":
+                try:
+                    distilled = await maybe_await(
+                        self.llm_complete(
+                            EDIT_INTENT_DISTILLER_SYSTEM_WITH_SHOTS,
+                            user_prompt,
+                        )
+                    )
+                    distilled = (distilled or "").strip()
+                    if distilled:
+                        distilled_data = extract_json(distilled)
+                        if isinstance(distilled_data, dict):
+                            if distilled_data.get("structured_intent"):
+                                distilled = str(distilled_data["structured_intent"]).strip()
+                            elif distilled_data.get("refined_intent"):
+                                distilled = str(distilled_data["refined_intent"]).strip()
+                            # 实体占位符还原：ENT_x -> 原始中文/日文/英文实体
+                            distilled = restore_entity_placeholders(
+                                distilled,
+                                distilled_data.get("entity_map") or {},
+                            )
+                        if distilled:
+                            logger.info(
+                                "Edit 小模型意图蒸馏: %d字符 -> %d字符",
+                                len(user_prompt),
+                                len(distilled),
+                            )
+                            user_prompt = distilled
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Edit 小模型意图蒸馏失败，使用原文: %s", e)
+            # Edit 模式同样执行 NER + 中文角色/作品 Tag 替换，再进入 edit draftsman
+            from anima_agent.tag_service.cn_tag_resolver import resolve_cn_tags
+
+            confirmed_tags, _nltags, _negative = await resolve_cn_tags(
+                user_prompt, self.llm_complete
+            )
+            if confirmed_tags:
+                user_prompt = (
+                    f"{user_prompt}\n\n[已确认角色/作品英文 Tag] "
+                    + ", ".join(confirmed_tags)
+                )
+
             return await self._draft_edit_mode(wd14_tags, user_prompt)
 
         # Normal/Random 模式
+        # 小模型预蒸馏：中文语义密度高，不按固定长度判断；走小模型就压缩成短英文关键信息
+        if effective_model_size == "small":
+            try:
+                distilled = await maybe_await(
+                    self.llm_complete(
+                        SMALL_MODEL_DISTILL_SYSTEM,
+                        user_prompt,
+                    )
+                )
+                distilled = (distilled or "").strip()
+                if distilled:
+                    # 优先取 structured_intent（结构化自然语言），兼容旧 refined_intent 字段
+                    distilled_data = extract_json(distilled)
+                    print(distilled_data)
+                    if isinstance(distilled_data, dict):
+                        if distilled_data.get("structured_intent"):
+                            distilled = str(distilled_data["structured_intent"]).strip()
+                        elif distilled_data.get("refined_intent"):
+                            distilled = str(distilled_data["refined_intent"]).strip()
+                        # 实体占位符还原：ENT_x -> 原始中文/日文/英文实体
+                        distilled = restore_entity_placeholders(
+                            distilled,
+                            distilled_data.get("entity_map") or {},
+                        )
+                    logger.info(
+                        "小模型长输入蒸馏: %d字符 -> %d字符",
+                        len(user_prompt),
+                        len(distilled),
+                    )
+                    user_prompt = distilled
+            except Exception as e:  # noqa: BLE001
+                logger.warning("小模型长输入蒸馏失败，使用原文: %s", e)
+
         # Stage 1+2+3: NER 抽取 → 精确检索 → 拼音容错（前置翻译节点）
         from anima_agent.tag_service.cn_tag_resolver import resolve_cn_tags
 
@@ -289,74 +379,40 @@ class SimpleAgent:
         confirmed_en_tags: Optional[list[str]] = None,
         nltags: Optional[list[str]] = None,
     ) -> str:
+        """【重构版】只组装客观数据，绝不包含规则和 JSON 骨架。"""
         parts = []
-        if ref_tags:
-            parts.append(
-                "参考图已自动打标(以下是图中真实内容的事实依据,出稿时采用,不要编造与它矛盾的内容):\n"
-                f"{ref_tags}\n"
-                "来源说明:[wd14] 是 WD14 精确 tag 碎片(颜色/道具/数量/服装/发型/绘制技法/画师元 tag),出稿时以此为事实依据。\n"
-                "[wd14] 里的画师元 tag(如 @wlop / drawn by xxx)必须写进 tag_queries"
-                "(group='artist'),由 danbooru tagger 锚定确认。\n"
-                "⚠️ 处理用户修改指令时(如换装/加配饰/改发型):\n"
-                "  - 用户明确提到的维度,必须替换 tagger 的 tag(例:换校服 → hard_tags 用 school_uniform,不要保留原 white_dress)\n"
-                "  - **换装时(用户要求换衣服):旧衣服相关词只能写进 args.prompt_12(负面),格式 (旧衣服:1.3~1.5)**,如 (white dress, ribbon:1.4)。正向 prompt(hard_tags/nltags_block)里旧衣服相关的一个词都不能出现——旧衣服名词(green dress/gloves)、指代词(old outfit/original clothes)、替换句('no trace of the original ...'/'the old outfit is completely replaced ...'/'instead of the old ...')全都不行,CLIP 会把它们当真生成导致新旧衣服杂糅;nltags_block 只描述新衣服本身\n"
-                "  - 用户没提的维度,直接照抄 tagger tag(不要凭印象改写发色瞳色等)\n"
-                "  - 画风:用户没提改画风 → 保留 [wd14] 绘制技法 tag(高权重);用户指定画风 → 用用户指定的\n"
-                "  - 参考图炼丹(InstantReferenceLoRA 训练层):换装时**绝不能**把旧衣服写进 args.ref_tag_exclude\n"
-                "    (打标悖论:训练时没打标的视觉内容会被烤进角色,衣服就永远脱不下来)——exclude 只放想焊死的\n"
-                "    身份特征(1girl/solo/looking at viewer/发色/瞳色);旧衣服留在训练集里打标+靠负面 prompt 镇压。\n"
-                "    可选炼丹参数:ref_tag_prepend/ref_tag_append(画风词)、ref_tag_general_threshold(0.25~0.35)、\n"
-                "    ref_train_network_dim(0/64/128)、ref_train_steps(0/150~200),不需要就保持默认 0/空\n"
-                "  - 在 nltags_block 中明确写'保留什么 / 改变什么'"
-            )
-        elif character_sheet:
-            parts.append(
-                "本会话已认识的角色(来自之前的参考图打标,以下为角色设定):\n"
-                f"{character_sheet}\n"
-                "若用户没有要求换角色,保持该角色的外观一致(发色/瞳色/发型/服装等);"
-                "若用户明确描述了一个新角色,以用户最新描述为准。"
-                "\n⚠️ 用户修改指令只作用在用户提到的维度,其他维度保持角色设定不变。"
-            )
 
-        # Stage 1+2+3: 前置翻译节点已锁定角色/作品 tag，
-        # Draftsman 只负责补充动作/光影/服装等其他元素
+        # 1. 核心意图 (放最前面，防止被覆盖)
+        parts.append(f"【用户最终意图】\n{user_prompt}")
+
+        # 2. 上下文缓冲 (Context)
+        if session_context:
+            parts.append(f"\n【会话上下文】\n{session_context}")
+
+        # 3. 参考数据注入 (Data Injection)
+        if ref_tags:
+            parts.append(f"\n【参考图 WD14 标签】(客观事实，请以此为基础画面依据):\n{ref_tags}")
+
+        if character_sheet:
+            parts.append(f"\n【已知角色设定】(需保持外观特征一致):\n{character_sheet}")
+
+        # 4. 前置处理器的强制约束 (Hard Constraints)
         if confirmed_en_tags:
-            parts.append(
-                "【前置系统已锁定】以下核心英文 Tag 必须完整包含在 hard_tags 中，"
-                "严禁改动或删除：\n  "
-                + ", ".join(confirmed_en_tags)
-                + "\n你的职责仅是根据用户意图，补充动作、光影、服装、镜头等其他元素的 Tag。"
-            )
+            tags_str = ", ".join(confirmed_en_tags)
+            parts.append(f"\n【必须使用的核心 Tag】(已校验，直接写入 hard_tags):\n{tags_str}")
+
         if cn_hint and not confirmed_en_tags:
-            parts.append(cn_hint)
+            parts.append(f"\n【系统提示】\n{cn_hint}")
 
         if nltags:
-            parts.append(
-                "【自然语言补充】以下内容在 Danbooru 标签库中无对应 Tag，"
-                "请以自然语言描述形式写入 nltags_block，交由 CLIP/T5 文本编码器自行泛化理解：\n  "
-                + "、".join(nltags)
-            )
+            nl_str = "、".join(nltags)
+            parts.append(f"\n【需转为自然语言的元素】(无对应Tag，必须写入 nltags_block):\n{nl_str}")
 
-        parts.append(f"用户请求:\n{user_prompt}")
-        if session_context:
-            parts.append(
-                f"\n上一轮上下文(用于修改意图,做局部替换):\n{session_context}"
-            )
         if confirmed_artists:
-            parts.append(
-                "\n标签库已确认以下名字是真实存在的 Danbooru 画师(artist):\n"
-                + ", ".join(confirmed_artists)
-                + "\n这些名字必须当画师处理:单画师写进 hard_tags 的 @画师;"
-                "用户明确要求融合多个时才填 artist_chain(不带@)。"
-                "不要把它们当成风格描述词。"
-            )
-        parts.append(
-            "\n请严格按以下 JSON 骨架输出(只输出 JSON,不要 markdown 代码块,"
-            f"字段名一个都不能改):\n{DRAFT_JSON_SKELETON}\n\n"
-            "注意:args 里不要给 prompt_11(由系统从 three_layer 组装);"
-            "three_layer 必须是三个字段的结构,不是拼接好的字符串。"
-            "tag_queries 列出需要校验的角色/作品/画师锚点。"
-        )
+            artist_str = ", ".join(confirmed_artists)
+            parts.append(f"\n【已确认画师名单】(必须作为 @画师 处理):\n{artist_str}")
+
+        # 删除了所有关于 LoRA 调参、换衣服规则、JSON 骨架的冗余文本！
         return "\n".join(parts)
 
     def _parse(self, resp: str) -> DraftResult:

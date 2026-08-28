@@ -215,7 +215,7 @@ def assemble_edit_prompt(
     parts.append(
         "A split screen image. "
         f"On the left side, {left_anchor.strip()}. "
-        f"On the right side, {right_edit.strip()}."
+        f"On the right side, {right_edit.strip()}.".replace("..", '.')
     )
 
     # 2. character_dna_tags

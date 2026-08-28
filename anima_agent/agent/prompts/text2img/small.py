@@ -30,13 +30,15 @@ CREATIVE_RULES = """# 构图与创意规则（填空版）
 - 不要写动作或场景
 
 ### brief.scene_container（必填）
-- 写"在哪里/有什么背景"
-- 例："classroom window", "beach sunset", "dark forest", "modern city street"
+- 提取所有的环境、天气、光影和背景元素。
+- 不要只写一个笼统的词，要罗列具体物件。
+- 例："cyberpunk city ruins, heavy rain, neon holograms", "dark forest, glowing mushrooms, fog"
 - 不要写角色动作
 
 ### brief.action_relation（必填）
-- 写"角色正在做什么"（3-8个词）
-- 例："sitting quietly looking out window", "standing with arms crossed", "holding a sword"
+- 提取所有的肢体动作和手部细节（极其重要）。
+- 遇到复杂动词必须拆解为具体身体部位（如 arms, hands, legs）。
+- 例："doing a backflip, raising left hand casting fire spell, holding katana in right hand"
 - 不要写场景
 
 ### brief.camera（必填）
@@ -92,9 +94,11 @@ UNIVERSAL_RULES = """# CRITICAL RULES
    - IF the intent mentions "hands", "holding", or "action", append: ", fused fingers, malformed hands, broken joints".
    - IF the intent has multiple characters, append: ", merged bodies, cloned face, extra limbs".
 
-3. OUTPUT CHECK:
+3. OUTPUT CHECK (STRICT SEPARATION):
    - hard_tags must be discrete tags, never full sentences.
    - nltags_block must start with "Place" or "Use".
+   - COMPLEXITY RULE: If the user describes a very complex scene, put the character details ONLY in `hard_tags`, and put the environmental descriptions ONLY in `soft_phrases` and `nltags_block`. DO NOT mix them.
+   - ACTION EXPANSION: You MUST describe specific limbs (hands, arms, legs) in `brief.action_relation` and `hard_tags` if the user describes a specific pose.
 """
 
 TUNE_PARAMS = """## 精细调参指南（args 字段）
@@ -147,8 +151,8 @@ JSON_SKELETON = """# 输出格式
 {
   "brief": {
     "subject": "人数+角色名或外观描述。例：1girl, silver hair",
-    "scene_container": "背景/场景。例：classroom, beach, dark forest",
-    "action_relation": "角色在做什么（3-8词）。例：sitting quietly, holding a sword",
+    "scene_container": "详细的背景/环境/天气元素",
+    "action_relation": "具体的肢体动作和手部细节",
     "camera": "只选一个：close-up / upper body / cowboy shot / full body",
     "view_angle": "只选一个：eye-level / from above / from below / from side",
     "canvas": "[宽, 高] 数字。例：[1024, 1536]",
@@ -175,6 +179,7 @@ JSON_SKELETON = """# 输出格式
 - [ ] nltags_block 以 Place 或 Use 开头
 - [ ] brief.subject 只写人数+外观，不写动作场景
 - [ ] prompt_12 包含 worst quality, low quality
+- [ ] The 'canvas' field MUST be a native JSON array of two integers. DO NOT wrap it in quotes.
 """
 
 EXAMPLES = """# 完整示例
