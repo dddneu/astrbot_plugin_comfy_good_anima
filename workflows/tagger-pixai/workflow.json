@@ -1,0 +1,62 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__REF_IMAGE__"
+    }
+  },
+  "2": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "upscale_method": "nearest-exact",
+      "width": 448,
+      "height": 448,
+      "crop": "disabled"
+    }
+  },
+  "3": {
+    "class_type": "Load Booru Tagger",
+    "inputs": {
+      "model_name": "pixai-tagger-v0.9",
+      "replace_underscore": true
+    }
+  },
+  "4": {
+    "class_type": "Booru Tagger",
+    "inputs": {
+      "tagger_model": [
+        "3",
+        0
+      ],
+      "tagger_info": [
+        "3",
+        1
+      ],
+      "image": [
+        "2",
+        0
+      ],
+      "threshold": [
+        "3",
+        2
+      ],
+      "character_threshold": [
+        "3",
+        3
+      ]
+    }
+  },
+  "5": {
+    "class_type": "PreviewText",
+    "inputs": {
+      "text": [
+        "4",
+        0
+      ]
+    }
+  }
+}

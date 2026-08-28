@@ -118,7 +118,7 @@
     "class_type": "AnimaTeaCache",
     "inputs": {
       "model": [
-        "64",
+        "65",
         0
       ],
       "threshold": 0.15,

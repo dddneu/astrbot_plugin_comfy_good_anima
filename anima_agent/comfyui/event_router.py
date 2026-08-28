@@ -75,7 +75,7 @@ class EventRouter:
     def register_node(self, prompt_id: str, node_id: str) -> asyncio.Future:
         """注册一个「等某个节点执行完成」的 Future。
 
-        用于读取中间节点的输出(如 Miaoshouai_Tagger 的 captions)。
+        用于读取中间节点的输出(如 Booru Tagger 的 tags)。
         与 register() 互不干扰;该 prompt 的 executed 事件到达且 node 匹配时
         以该节点的 output 直接 resolve。已缓存到 recent 的匹配事件会立即回放;
         已缓存的 execution_error / interrupted 也会立即以异常回放(修竞态:

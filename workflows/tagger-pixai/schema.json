@@ -1,0 +1,5 @@
+{
+  "description": "参考图自动打标(PixAI Booru Tagger 路线):LoadImage → ImageScale(448) → Load Booru Tagger(pixai-tagger-v0.9) → Booru Tagger → tags。输出 WD14/danbooru 风格 tag。",
+  "enabled": true,
+  "parameters": {}
+}

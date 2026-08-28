@@ -27,8 +27,10 @@ def test_assemble_edit_prompt_accepts_tag_lists():
 def test_small_edit_prompt_requires_compact_visual_anchor():
     system_prompt = prompts_edit.EDIT_REGISTRY["small"]["system"]
 
-    assert "12-24 words" in system_prompt
-    assert "Never reduce it to only subject + verb" in system_prompt
+    assert "STRICT ZERO-CLOTHING RULE" in system_prompt
+    assert "ABSOLUTELY NO CLOTHING OR BACKGROUND DESCRIPTIONS" in system_prompt
+    assert "right_edit PREFIX RULE (STRICT BRANCHING)" in system_prompt
+    assert "ACTION EXPANSION" in system_prompt
 
 
 def test_txt2img_prompt_has_model_specific_universal_rules():

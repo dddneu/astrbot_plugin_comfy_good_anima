@@ -110,8 +110,8 @@
       "model_patch": ["39", 0],
       "image": ["18", 0],
       "mask": ["18", 2],
-      "strength": 0.8,
-      "start_percent": 0,
+      "strength": 1.0,
+      "start_percent": 0.2,
       "end_percent": 1.0
     }
   },
@@ -137,8 +137,8 @@
       "negative": ["16", 1],
       "latent_image": ["55", 0],
       "seed": 0,
-      "steps": 8,
-      "cfg": 1.0,
+      "steps": 10,
+      "cfg": 1.5,
       "sampler_name": "dpmpp_2m_sde",
       "scheduler": "simple",
       "denoise": 1.0,

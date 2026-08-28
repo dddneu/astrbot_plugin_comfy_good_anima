@@ -126,7 +126,7 @@ class AnimaAgentPlugin:
                 fixed=固定使用 random_artist_fixed 指定的画师。同时影响 /redraw 行为。
             random_artist_top_n: 池大小(仅 pool 模式)。
             random_artist_fixed: 固定画师英文 tag(仅 fixed 模式,不带 @)。
-            ref_tagger: 参考图打标开关。仅使用 Miaoshouai(WD14),Qwen-VL 已禁用。
+            ref_tagger: 参考图打标开关。仅使用 PixAI(WD14),Qwen-VL 已禁用。
             instantref_params: InstantRef 基线参数(程序化注入/测试用,面板已无此配置;
                 实际调试交给 LLM 经 tune_params 调)。
             reply_with_prompt: 开关。开启后,出图成功回复(「已生成[图片]」)里附带
@@ -167,7 +167,7 @@ class AnimaAgentPlugin:
         self.random_artist_top_n: int = max(1, int(random_artist_top_n))
         self.random_artist_fixed: str = (random_artist_fixed or "").strip()
         # 参考图自动打标(意图识别前运行,给 LLM 图中真实内容,防乱编 prompt)
-        # DualTagger 单路 Miaoshouai(WD14 碎片:画风/技法/特征);Qwen-VL 已禁用。
+        # DualTagger 单路 PixAI(WD14 碎片:画风/技法/特征);Qwen-VL 已禁用。
         self.ref_tagger: Optional["DualTagger"] = None
         if ref_tagger:
             try:
@@ -747,14 +747,14 @@ class AnimaAgentPlugin:
             return results  # 后续检查都依赖 /object_info
 
         # 3. 工作流引用的自定义节点是否已安装
-        # 注意:打标工作流(tagger-miaoshouai / tagger-qwenvl)的「文本输出节点」
-        # 是运行时占位(按实际安装的 PreviewText/ShowText 替换),不在此扫描,
-        # 由专项检查(第 4.5 项)负责。
+        # 注意:tagger-qwenvl 的「文本输出节点」是运行时占位
+        # (按实际安装的 PreviewText/ShowText 替换),不在此扫描,
+        # 由专项检查(第 4.5 项)负责。tagger-pixai 使用固定 Booru Tagger 节点,正常扫描。
         wf_root: _Path = WORKFLOW_ROOT
         needed_nodes: set[str] = set()
         needed_models: list[tuple[str, str]] = []  # (文件名, 节点类)
         for wf_file in wf_root.glob("*/workflow.json"):
-            if wf_file.parent.name in ("tagger-miaoshouai", "tagger-qwenvl"):
+            if wf_file.parent.name == "tagger-qwenvl":
                 continue
             graph = _json.loads(wf_file.read_text(encoding="utf-8"))
             for node in graph.values():
@@ -817,8 +817,9 @@ class AnimaAgentPlugin:
         tagger_missing = [
             c
             for c in (
-                "Miaoshouai_Tagger",
-                "ResizeImagesByLongerEdge",
+                "Booru Tagger",
+                "Load Booru Tagger",
+                "ImageScale",
                 "TextGenerate",  # Qwen3-VL 文本生成节点(tagger-qwenvl 双路打标用)
             )
             if c not in info

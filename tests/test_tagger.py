@@ -60,10 +60,10 @@ async def test_router_node_error_propagates():
 async def test_router_node_error_race_replay():
     """竞态:execution_error 先于 register_node 到达 → 注册时立即以异常回放,不等超时。"""
     r = EventRouter()
-    r.dispatch({"type": "execution_error", "data": {"prompt_id": "p5", "exception_message": "model promptgen_base_v2.0 not found"}})
+    r.dispatch({"type": "execution_error", "data": {"prompt_id": "p5", "exception_message": "model pixai-tagger-v0.9 not found"}})
     fut = r.register_node("p5", "1")
     assert fut.done()
-    with pytest.raises(Exception, match="model promptgen_base_v2.0 not found"):
+    with pytest.raises(Exception, match="model pixai-tagger-v0.9 not found"):
         fut.result()
 
 
@@ -82,19 +82,30 @@ async def test_router_node_cancel():
 
 FAKE_INFO = {
     "LoadImage": {"input": {"required": {"image": ("STRING", {})}}},
-    "ResizeImagesByLongerEdge": {
-        "input": {"required": {"images": ("IMAGE", {}), "longer_edge": ("INT", {"min": 16, "max": 8192, "default": 1280})}}
-    },
-    "Miaoshouai_Tagger": {
+    "ImageScale": {
         "input": {"required": {
-            "images": ("IMAGE", {}),
-            "model": (["promptgen_base_v2.0", "wd14_swin_v2"], {}),
-            "threshold": ("FLOAT", {"default": 0.35}),
-            "tags": (["extra_mixed", "extra", "general"], {"default": "extra"}),
-            "max_workers": ("INT", {"min": 1, "max": 16, "default": 4}),
+            "image": ("IMAGE", {}),
+            "upscale_method": (["nearest-exact", "bilinear"], {"default": "nearest-exact"}),
+            "width": ("INT", {"min": 1, "max": 8192, "default": 448}),
+            "height": ("INT", {"min": 1, "max": 8192, "default": 448}),
+            "crop": (["disabled", "center"], {"default": "disabled"}),
         }}
     },
-    "PreviewImage": {"input": {"required": {"images": ("IMAGE", {})}}},
+    "Load Booru Tagger": {
+        "input": {"required": {
+            "model_name": (["pixai-tagger-v0.9", "pixai-tagger-v1.0"], {"default": "pixai-tagger-v0.9"}),
+            "replace_underscore": ("BOOLEAN", {"default": True}),
+        }}
+    },
+    "Booru Tagger": {
+        "input": {"required": {
+            "tagger_model": ("TAGGER_MODEL", {}),
+            "tagger_info": ("TAGGER_INFO", {}),
+            "image": ("IMAGE", {}),
+            "threshold": ("FLOAT", {"default": 0.35}),
+            "character_threshold": ("FLOAT", {"default": 0.85}),
+        }}
+    },
     "PreviewText": {"input": {"required": {"text": ("STRING", {})}}},
 }
 
@@ -114,18 +125,26 @@ def test_tagger_build_workflow():
     t = RefImageTagger(_FakeClient())
     wf = t._build_workflow(FAKE_INFO, "ref_abc.png", "PreviewText")
 
-    assert wf["3"]["inputs"]["image"] == "ref_abc.png"  # LoadImage 占位符替换
-    assert wf["4"]["inputs"] == {"images": ["3", 0], "longer_edge": 1280}
-    n1 = wf["1"]["inputs"]
-    assert n1["images"] == ["4", 0]
-    assert n1["model"] == "promptgen_base_v2.0"   # override 命中枚举
-    assert n1["tags"] == "extra_mixed"            # override 命中枚举
-    assert n1["threshold"] == 0.35                # 节点默认值
-    assert n1["max_workers"] == 4
-    assert wf["7"]["inputs"]["images"] == ["1", 0]  # PreviewImage 让 tagger 不被打磨
-    # 文本输出节点:运行时选中的 class + captions 接线
+    assert wf["1"]["inputs"]["image"] == "ref_abc.png"  # LoadImage 占位符替换
+    assert wf["2"]["inputs"] == {
+        "image": ["1", 0],
+        "upscale_method": "nearest-exact",
+        "width": 448,
+        "height": 448,
+        "crop": "disabled",
+    }
+    n3 = wf["3"]["inputs"]
+    assert n3["model_name"] == "pixai-tagger-v0.9"  # override 命中枚举
+    assert n3["replace_underscore"] is True
+    n4 = wf["4"]["inputs"]
+    assert n4["tagger_model"] == ["3", 0]
+    assert n4["tagger_info"] == ["3", 1]
+    assert n4["image"] == ["2", 0]
+    assert n4["threshold"] == ["3", 2]
+    assert n4["character_threshold"] == ["3", 3]
+    # 文本输出节点:运行时选中的 class + tags 接线
     assert wf["5"]["class_type"] == "PreviewText"
-    assert wf["5"]["inputs"]["text"] == ["1", 2]
+    assert wf["5"]["inputs"]["text"] == ["4", 0]
 
 
 def test_select_text_node():
@@ -183,7 +202,7 @@ def test_fill_required_inputs_override_falls_back_to_enum():
         "count": (["INT", {"min": 1, "max": 8}]),
     }
     node_spec = {}
-    out = _fill_required_inputs("Miaoshouai_Tagger", node_spec, {"Miaoshouai_Tagger": {"input": {"required": spec}}}, {"model": "zzz"})
+    out = _fill_required_inputs("Booru Tagger", node_spec, {"Booru Tagger": {"input": {"required": spec}}}, {"model": "zzz"})
     assert out["model"] == "a"
     assert out["threshold"] == 0.5
     assert out["count"] == 1
@@ -213,7 +232,7 @@ class _FakeClientRace:
     async def submit(self, payload):
         self.router.dispatch({
             "type": "execution_error",
-            "data": {"prompt_id": "pid1", "exception_message": "model promptgen_base_v2.0 not found"},
+            "data": {"prompt_id": "pid1", "exception_message": "model pixai-tagger-v0.9 not found"},
         })
         return "pid1"
 
@@ -227,7 +246,7 @@ async def test_tagger_run_error_race_surfaces_message():
     from anima_agent.comfyui.client import ComfyUIError
 
     t = RefImageTagger(_FakeClientRace(), timeout=120.0)
-    with pytest.raises(ComfyUIError, match="promptgen_base_v2.0 not found"):
+    with pytest.raises(ComfyUIError, match="pixai-tagger-v0.9 not found"):
         await t.run(b"fake-png")
 
 
@@ -884,6 +903,9 @@ def test_submitted_positive_text():
 
 FAKE_INFO_DUAL = {
     **FAKE_INFO,
+    "ResizeImagesByLongerEdge": {
+        "input": {"required": {"images": ("IMAGE", {}), "longer_edge": ("INT", {"min": 16, "max": 8192, "default": 1280})}}
+    },
     "CLIPLoader": {
         "input": {"required": {
             "clip_name": (
@@ -1096,7 +1118,7 @@ class _FakeClientDual:
         self._pid += 1
         pid = f"pid{self._pid}"
         classes = [n.get("class_type") for n in payload.values()]
-        if "Miaoshouai_Tagger" in classes:
+        if "Booru Tagger" in classes:
             text = "SILVER HAIR, blue eyes, white dress"
         elif payload["4"]["inputs"].get("prompt") == TEXTGEN_STYLE_PROMPT:
             # Qwen-VL 画风调用(单用途,输出干净)
@@ -1144,7 +1166,7 @@ async def test_dual_tagger_qwenvl_failure_raises():
             self._pid += 1
             pid = f"pid{self._pid}"
             classes = [n.get("class_type") for n in payload.values()]
-            if "Miaoshouai_Tagger" in classes:
+            if "Booru Tagger" in classes:
                 self.router.dispatch({
                     "type": "executed",
                     "data": {"prompt_id": pid, "node": "5", "output": {"ui": {"text": ["silver hair"]}}},
@@ -1173,10 +1195,10 @@ async def test_dual_tagger_miaoshouai_failure_degrades_to_vlm():
             self._pid += 1
             pid = f"pid{self._pid}"
             classes = [n.get("class_type") for n in payload.values()]
-            if "Miaoshouai_Tagger" in classes:
+            if "Booru Tagger" in classes:
                 self.router.dispatch({
                     "type": "execution_error",
-                    "data": {"prompt_id": pid, "exception_message": "model promptgen_base_v2.0 not found"},
+                    "data": {"prompt_id": pid, "exception_message": "model pixai-tagger-v0.9 not found"},
                 })
                 return pid
             prompt = payload["4"]["inputs"].get("prompt")
@@ -1212,7 +1234,7 @@ async def test_dual_tagger_vlm_empty_retries_with_new_seed():
             self._pid += 1
             pid = f"pid{self._pid}"
             classes = [n.get("class_type") for n in payload.values()]
-            if "Miaoshouai_Tagger" in classes:
+            if "Booru Tagger" in classes:
                 text = "SILVER HAIR, blue eyes"
             elif payload["4"]["inputs"].get("prompt") == TEXTGEN_STYLE_PROMPT:
                 text = "watercolor, cel shading"

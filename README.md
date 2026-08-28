@@ -56,7 +56,7 @@ git clone https://github.com/yourname/astrbot_plugin_comfy_good_anima
 (WebUI → 配置页 → 服务提供商,任意 OpenAI 兼容 LLM 均可),且跟随用户在会话中切换的模型。
 | `workflow` | aesthetic-lora | base(裸模型)/ aesthetic-lora(双 LoRA)/ artist-mixer(画师融合)/ instantref(快速 LoRA 参考图)/ instantref-ipadapter(IP-Adapter + LoRA 组合);附参考图时默认自动切 `aesthetic-lora-instantref` |
 | `nsfw` | `false` | NSFW 模式;Anima 模型用 NSFW 数据训练,开启后画质显著提升。不安全模式也会自动拒绝 explicit 内容 |
-| `ref_tagger` | `true` | 参考图自动打标:带参考图时先用 Miaoshouai_Tagger 打标图中真实内容并注入 LLM 出稿(防 LLM 看不到图乱编 prompt)。需 ComfyUI-Miaoshouai-Tagger;打标失败自动降级不阻断生图 |
+| `ref_tagger` | `true` | 参考图自动打标:带参考图时先用 PixAI Booru Tagger 打标图中真实内容并注入 LLM 出稿(防 LLM 看不到图乱编 prompt)。需 ComfyUI-PixAI-Tagger;打标失败自动降级不阻断生图 |
 | `instantref_model_strength` | `1.0` | Instant Reference 模型强度(0~2)。角色细节弱/姿态杂糅时降到 `0.5~0.7`(姿势焊死是单图 LoRA 通病,先降强度再提训练量) |
 | `instantref_clip_strength` | `1.0` | Instant Reference CLIP 强度(0~2),一般保持默认 |
 | `wait_for_image` | `true` | 等图模式;false 则提交即回、生成完主动推送 |
@@ -79,7 +79,7 @@ git clone https://github.com/yourname/astrbot_plugin_comfy_good_anima
 | AnimaArtistPack 系列 | 仅画师融合工作流需要 |
 | InstantReferenceLoRA(comfyui-instant-reference) | **参考图工作流(`*-instantref`)**:附参考图时在 ComfyUI 内快速训练 LoRA 并应用,让模型认识该角色(替代 IP-Adapter;需其 sd-scripts 依赖) |
 | AnimaIPAdapterLoader / AnimaIPAdapterApply | 仅 `*-ref` 工作流需要（基于 IP-Adapter 的角色参考） |
-| Miaoshouai_Tagger | 参考图自动打标(默认开启,打标失败自动降级);缺了只影响参考图质量 |
+| PixAI Booru Tagger | 参考图自动打标(默认开启,打标失败自动降级);缺了只影响参考图质量 |
 | ResizeImagesByLongerEdge | 打标前缩放参考图(如 KJNodes 提供) |
 
 > 参考图方案:默认附参考图 → 自动走 `*-instantref`(快速 LoRA)。角色细节弱/姿态杂糅时:面板调低 `instantref_model_strength`(如 0.6)。

@@ -48,8 +48,13 @@ class _FakeClientVision:
     async def object_info(self):
         return {
             "LoadImage": {"input": {"required": {"image": ("STRING", {})}}},
-            "ResizeImagesByLongerEdge": {"input": {"required": {
-                "images": ("IMAGE", {}), "longer_edge": ("INT", {"default": 1280})}}},
+            "ImageScale": {"input": {"required": {
+                "image": ("IMAGE", {}),
+                "upscale_method": (["nearest-exact"], {"default": "nearest-exact"}),
+                "width": ("INT", {"default": 448}),
+                "height": ("INT", {"default": 448}),
+                "crop": (["disabled"], {"default": "disabled"}),
+            }}},
             "CLIPLoader": {"input": {"required": {"clip_name": ("STRING", {})}}},
             "TextGenerate": {"input": {"required": {
                 "clip": ("CLIP", {}), "image": ("IMAGE", {}),
@@ -64,11 +69,17 @@ class _FakeClientVision:
                 "use_default_template": ("BOOLEAN", {"default": True}),
             }}},
             "PreviewText": {"input": {"required": {"text": ("STRING", {})}}},
-            "Miaoshouai_Tagger": {"input": {"required": {
-                "images": ("IMAGE", {}), "model": (["promptgen_base_v2.0"], {}),
+            "Load Booru Tagger": {"input": {"required": {
+                "model_name": (["pixai-tagger-v0.9"], {}),
+                "replace_underscore": ("BOOLEAN", {"default": True}),
+            }}},
+            "Booru Tagger": {"input": {"required": {
+                "tagger_model": ("TAGGER_MODEL", {}),
+                "tagger_info": ("TAGGER_INFO", {}),
+                "image": ("IMAGE", {}),
                 "threshold": ("FLOAT", {"default": 0.35}),
-                "tags": (["extra_mixed"], {}), "max_workers": ("INT", {"default": 4})}}},
-            "PreviewImage": {"input": {"required": {"images": ("IMAGE", {})}}},
+                "character_threshold": ("FLOAT", {"default": 0.85}),
+            }}},
         }
 
     async def upload_image(self, image_bytes):
@@ -179,7 +190,7 @@ async def test_dual_tagger_llm_lane_primary():
     # Qwen-VL 未被调用:只提交了 miaoshouai 一个工作流(不含 TextGenerate)
     assert len(client.submitted) == 1
     classes = {n.get("class_type") for n in client.submitted[0].values()}
-    assert "Miaoshouai_Tagger" in classes and "TextGenerate" not in classes
+    assert "Booru Tagger" in classes and "TextGenerate" not in classes
 
 
 @pytest.mark.asyncio

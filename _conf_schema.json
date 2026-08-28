@@ -57,7 +57,7 @@
     "default": ""
   },
   "ref_tagger": {
-    "description": "参考图自动打标:用户附带参考图时,先用 Miaoshouai_Tagger 打标图中内容,把真实 tag 注入 LLM 出稿(防乱编 prompt)。需 ComfyUI 安装 ComfyUI-Miaoshouai-Tagger;打标失败自动降级不阻断生图",
+    "description": "参考图自动打标:用户附带参考图时,先用 PixAI Booru Tagger 打标图中内容,把真实 tag 注入 LLM 出稿(防乱编 prompt)。需 ComfyUI 安装 ComfyUI-PixAI-Tagger;打标失败自动降级不阻断生图",
     "type": "bool",
     "default": true
   },

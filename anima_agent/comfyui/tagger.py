@@ -1,13 +1,13 @@
-"""参考图自动打标:Miaoshouai_Tagger + WD14 tag 碎片融合。
+"""参考图自动打标:Booru Tagger + WD14 tag 碎片融合。
 
 用途:用户在消息里附带参考图时,先跑一次打标,把图中真实内容(角色/服装/
 场景/道具等 tag)喂给 LLM,避免 LLM 看不到图而乱编 prompt(参考图模式的
 核心缺陷)。打标在「意图识别之前」执行,结果同时注入意图分类与出稿。
 
-**单路打标**:Miaoshouai_Tagger(WD14 tag 碎片,精确标签专用)。不再使用
+**单路打标**:Booru Tagger(WD14 tag 碎片,精确标签专用)。不再使用
 Qwen-VL(大模型视觉打标已替代其身材/五官+画风任务,WD14 负责全部精确 tag)。
 - [wd14] 段:精确语义锚点(颜色/道具/数量/画师/服装/发型/绘制技法),供 LLM 精确引用。
-  来自 Miaoshouai(WD14)——专门为此训练的标签器,比 LLM 生成的 danbooru tag 准。
+  来自 PixAI(WD14)——专门为此训练的标签器,比 LLM 生成的 danbooru tag 准。
 - 换装时的服装隔离(旧衣服不进正向、写进负面镇压)由大模型(draftsman)在
   出稿时完成,见 REF_IMAGE_MODE「换装不换人」。
 """
@@ -28,17 +28,18 @@ from anima_agent.comfyui.schema_injector import _detect_ext, load_workflow
 
 logger = logging.getLogger(__name__)
 
-TAGGER_WORKFLOW_ID = "tagger-miaoshouai"
+TAGGER_WORKFLOW_ID = "tagger-pixai"
 QWENVL_WORKFLOW_ID = "tagger-qwenvl"
-TAGGER_NODE_CLASS = "Miaoshouai_Tagger"
+TAGGER_NODE_CLASS = "Booru Tagger"
+TAGGER_LOADER_NODE_CLASS = "Load Booru Tagger"
 TEXTGEN_NODE_CLASS = "TextGenerate"     # Qwen3-VL 文本生成节点
 
 # ---- 模板节点 id(与 workflows/tagger-*/workflow.json 一致)----
-# tagger-miaoshouai:LoadImage(3) → Resize(4) → Miaoshouai_Tagger(1) → PreviewImage(7) + 文本输出(5)
-MIAO_LOAD_NODE_ID = "3"
-MIAO_RESIZE_NODE_ID = "4"
-MIAO_TAGGER_NODE_ID = "1"
-MIAO_PREVIEW_IMAGE_NODE_ID = "7"
+# tagger-pixai:LoadImage(1) → ImageScale(2) → Load Booru Tagger(3) → Booru Tagger(4) → 文本输出(5)
+PIXAI_LOAD_NODE_ID = "1"
+PIXAI_IMAGE_SCALE_NODE_ID = "2"
+PIXAI_LOADER_NODE_ID = "3"
+PIXAI_TAGGER_NODE_ID = "4"
 # tagger-qwenvl:LoadImage(1) → Resize(2) → CLIPLoader(3) → TextGenerate(4) → 文本输出(5)
 QWV_LOAD_NODE_ID = "1"
 QWV_RESIZE_NODE_ID = "2"
@@ -55,7 +56,7 @@ TEXT_OUTPUT_NODE_ID = "5"
 # 服装+配饰+材质+穿戴方式…)会让部分图片直接空输出(3/3 全空,换措辞无效)。
 # 因此描述指令精简为**身材/五官单任务**,且不带任何"不要描述X"类禁令
 # (禁令同样会诱发空输出,实测加"禁止描述衣服"即 3/3 空)——服装/发型/画风/
-# 技法等结构化特征由 Miaoshouai tagger 打标,换装时的服装语义隔离交给大模型
+# 技法等结构化特征由 PixAI tagger 打标,换装时的服装语义隔离交给大模型
 # (draftsman):VLM 只管身材/五官,LLM 在换装时把旧衣服从正向 prompt 剔除并
 # 写进负面 prompt 镇压(见 REF_IMAGE_MODE「换装不换人」)。
 TEXTGEN_PROMPT = (
@@ -126,7 +127,7 @@ async def llm_tag_image(
 
     图片以 base64 data URL 传给视觉回调;输出解析为结构化 JSON,返回
     (description, style)(对应 [vlm]/[style] 槽位;description 保持原样,
-    style 小写)。**不产出精确 tag**——精确标签由 Miaoshouai(W14)打标,
+    style 小写)。**不产出精确 tag**——精确标签由 PixAI(W14)打标,
     大模型只替代 Qwen-VL 的「身材/五官 + 画风」两路。
 
     失败语义:
@@ -213,10 +214,9 @@ DEFAULT_TIMEOUT = 120.0
 QWENVL_TIMEOUT = 300.0
 
 # 覆盖默认值(与用户保存的工作流一致;不在此列表的字段用节点默认值)
-TAGGER_OVERRIDES: dict[str, Any] = {
-    "model": "promptgen_base_v2.0",
-    "tags": "extra_mixed",
-}
+# PixAI Booru Tagger 的 threshold/character_threshold 由 Load Booru Tagger 连接提供,
+# 因此这里不再需要 Miaoshouai 时代的 model/tags 覆盖。
+TAGGER_OVERRIDES: dict[str, Any] = {}
 # tagger-qwenvl 的 CLIPLoader:qwen_image 类型 + 用户保存的 Qwen3-VL 模型
 # (服务端枚举里没有该文件时 _default_widget_value 会自动回退到枚举首值)
 QWENVL_CLIP_OVERRIDES: dict[str, Any] = {
@@ -351,10 +351,10 @@ def _fuse_tags(miaoshouai_tags: str, qwen_vl_tags: str, style_tags: str = "") ->
 
 @dataclass
 class DualTaggerResult:
-    """双路打标融合结果:并联 Miaoshouai(WD14 碎片)+ Qwen3-VL(自然语言描述 + 画风)。
+    """双路打标融合结果:并联 PixAI(WD14 碎片)+ Qwen3-VL(自然语言描述 + 画风)。
 
     - miaoshouai_tags:WD14 tag 碎片(小写,逗号分隔),精确语义锚点(含服装/发型/技法 tag)。
-        只来自 Miaoshouai 打标器(专用),大模型不参与。
+        只来自 PixAI 打标器(专用),大模型不参与。
     - qwen_vl_tags:身材/五官自然语言描述(体型/比例/脸型/眼/鼻/嘴),原样保留。
         主路来自大模型视觉;回退路来自 Qwen3-VL。
     - style_tags:画风关键词(艺术风格/上色/线条/光影/材质)。
@@ -481,7 +481,7 @@ def _default_widget_value(spec: list, override: Any) -> Any:
 
 
 class RefImageTagger:
-    """参考图打标器单路封装(底层)。上层应使用 DualTagger 并联 Miaoshouai + Qwen-VL。
+    """参考图打标器单路封装(底层)。上层应使用 DualTagger 并联 PixAI + Qwen-VL。
 
     Args:
         workflow_id: TAGGER_WORKFLOW_ID 或 QWENVL_WORKFLOW_ID。
@@ -507,7 +507,7 @@ class RefImageTagger:
             filename: 可选,DualTagger 模式上传后传给两路 tagger 复用,避免重复上传。
 
         Qwen-VL 路:两次单用途调用(物理描述 + 画风),空输出换 seed 重试;
-        Miaoshouai 路:单次打标。
+        PixAI 路:单次打标。
 
         Raises:
             ComfyUIError / TimeoutError:打标失败(缺节点/缺模型/超时等),
@@ -669,7 +669,7 @@ class RefImageTagger:
             await asyncio.sleep(2.0)
         raise TimeoutError(
             f"参考图打标超时({timeout:.0f}s): /history 未返回 completed,"
-            "请检查 Miaoshouai_Tagger / TextGenerate 节点与模型是否就绪"
+            "请检查 Booru Tagger / TextGenerate 节点与模型是否就绪"
         )
 
     @staticmethod
@@ -792,14 +792,15 @@ class RefImageTagger:
                     "(需要支持 Qwen3-VL 文本生成的节点包;安装后**重启 ComfyUI**)",
                 )
             return
-        missing = [c for c in (TAGGER_NODE_CLASS, "LoadImage", "PreviewImage") if c not in info]
+        missing = [
+            c for c in (TAGGER_NODE_CLASS, TAGGER_LOADER_NODE_CLASS, "LoadImage", "ImageScale")
+            if c not in info
+        ]
         if missing:
             raise ComfyUIError(
                 f"参考图打标依赖节点缺失: {missing}(ComfyUI Manager 安装 "
-                "ComfyUI-Miaoshouai-Tagger 等节点包)"
+                "ComfyUI-Booru-Tagger 等节点包)"
             )
-        if "ResizeImagesByLongerEdge" not in info:
-            raise ComfyUIError("参考图打标依赖节点缺失: ResizeImagesByLongerEdge(如 KJNodes 提供)")
 
     # ---- 工作流构建(按 workflow_id 分路径)----
 
@@ -807,27 +808,32 @@ class RefImageTagger:
         """从模板 + /object_info 构建 API 格式工作流。"""
         if self.is_qwenvl:
             return self._build_qwenvl_workflow(info, filename, text_cls)
-        return self._build_miaoshouai_workflow(info, filename, text_cls)
+        return self._build_pixai_workflow(info, filename, text_cls)
 
-    def _build_miaoshouai_workflow(self, info: dict, filename: str, text_cls: str) -> dict:
-        """tagger-miaoshouai:LoadImage(3) → Resize(4) → Miaoshouai_Tagger(1)
-        → PreviewImage(7) + 文本输出节点(5,运行时选 class)。"""
+    def _build_pixai_workflow(self, info: dict, filename: str, text_cls: str) -> dict:
+        """tagger-pixai:LoadImage(1) → ImageScale(2) → Load Booru Tagger(3)
+        → Booru Tagger(4) → 文本输出节点(5,运行时选 class)。"""
         workflow = copy.deepcopy(self._load_template())
         self._inject_ref_image(workflow, filename)
-        workflow[MIAO_RESIZE_NODE_ID]["inputs"] = _fill_required_inputs(
-            "ResizeImagesByLongerEdge",
-            workflow[MIAO_RESIZE_NODE_ID]["inputs"],
+        workflow[PIXAI_IMAGE_SCALE_NODE_ID]["inputs"] = _fill_required_inputs(
+            "ImageScale",
+            workflow[PIXAI_IMAGE_SCALE_NODE_ID]["inputs"],
             info,
-            {"longer_edge": 1280},
+            {"upscale_method": "nearest-exact", "width": 448, "height": 448, "crop": "disabled"},
         )
-        workflow[MIAO_TAGGER_NODE_ID]["inputs"] = _fill_required_inputs(
+        workflow[PIXAI_LOADER_NODE_ID]["inputs"] = _fill_required_inputs(
+            TAGGER_LOADER_NODE_CLASS,
+            workflow[PIXAI_LOADER_NODE_ID]["inputs"],
+            info,
+            {"model_name": "pixai-tagger-v0.9", "replace_underscore": True},
+        )
+        workflow[PIXAI_TAGGER_NODE_ID]["inputs"] = _fill_required_inputs(
             TAGGER_NODE_CLASS,
-            workflow[MIAO_TAGGER_NODE_ID]["inputs"],
+            workflow[PIXAI_TAGGER_NODE_ID]["inputs"],
             info,
             TAGGER_OVERRIDES,
         )
-        # PreviewImage(7) 让 tagger 节点不被打磨(模板已带,不动)
-        self._attach_text_output(workflow, info, text_cls, [MIAO_TAGGER_NODE_ID, 2])
+        self._attach_text_output(workflow, info, text_cls, [PIXAI_TAGGER_NODE_ID, 0])
         return workflow
 
     def _build_qwenvl_workflow(self, info: dict, filename: str, text_cls: str) -> dict:
@@ -887,7 +893,7 @@ class RefImageTagger:
     ) -> None:
         """文本输出节点:运行时选 class,文本输入字段名按 /object_info 探测。
 
-        source_link: 文本来源连接,如 [MIAO_TAGGER_NODE_ID, 2](captions 输出)
+        source_link: 文本来源连接,如 [PIXAI_TAGGER_NODE_ID, 0](tags 输出)
         或 [QWV_TEXTGEN_NODE_ID, 0](generated_text 输出)。
         """
         text_input = self._find_text_input(info, text_cls)
@@ -901,9 +907,9 @@ class RefImageTagger:
 
 
 class DualTagger:
-    """参考图单路打标:Miaoshouai_Tagger(WD14 碎片)。
+    """参考图单路打标:Booru Tagger(WD14 碎片)。
 
-    Qwen-VL 已禁用;精确 tag 由 Miaoshouai 提供(专用标签器,比 LLM 更准),
+    Qwen-VL 已禁用;精确 tag 由 PixAI 提供(专用标签器,比 LLM 更准),
     身材/五官与画风由大模型(draftsman)在出稿时自行处理。
     """
 
@@ -916,32 +922,32 @@ class DualTagger:
         llm_timeout: float = LLM_TAG_TIMEOUT,
     ):
         self.client = client
-        self._miaoshouai = RefImageTagger(client, TAGGER_WORKFLOW_ID, timeout=timeout)
+        self._pixai = RefImageTagger(client, TAGGER_WORKFLOW_ID, timeout=timeout)
 
     async def run(self, image_bytes: bytes, filename: Optional[str] = None) -> DualTaggerResult:
-        """跑 Miaoshouai 打标,返回 [wd14] 段。
+        """跑 PixAI 打标,返回 [wd14] 段。
 
         Raises:
-            ComfyUIError / TimeoutError:Miaoshouai 路径失败 → 异常。
+            ComfyUIError / TimeoutError:PixAI 路径失败 → 异常。
         """
         await self.client.start()
         if filename is None:
             filename = await self.client.upload_image(image_bytes)
         info = await self.client.object_info()
-        self._miaoshouai._object_info = info
+        self._pixai._object_info = info
 
         t0 = time.monotonic()
-        miao_res = await self._miaoshouai.run(image_bytes, filename)
+        pixai_res = await self._pixai.run(image_bytes, filename)
 
         result = DualTaggerResult(
-            miaoshouai_tags=miao_res.tags,
+            miaoshouai_tags=pixai_res.tags,
             qwen_vl_tags="",
             style_tags="",
             filename=filename,
         )
         logger.info(
-            "DualTagger(Miaoshouai only) 完成 耗时=%.2fs miaoshouai=%d字符",
-            time.monotonic() - t0, len(miao_res.tags),
+            "DualTagger(PixAI only) 完成 耗时=%.2fs pixai=%d字符",
+            time.monotonic() - t0, len(pixai_res.tags),
         )
         return result
 
@@ -954,6 +960,7 @@ __all__ = [
     "TAGGER_WORKFLOW_ID",
     "QWENVL_WORKFLOW_ID",
     "TAGGER_NODE_CLASS",
+    "TAGGER_LOADER_NODE_CLASS",
     "TEXTGEN_NODE_CLASS",
     "LLM_TAG_SYSTEM_PROMPT",
     "LLM_TAG_USER_PROMPT",
