@@ -792,7 +792,6 @@ class AnimaStar(Star):
 
         与 /draw 的差别:
         - 继承 seed(同一基础图;支持 /redraw 重抽)
-        - 继承 character_sheet(同一角色外观)
         - 复用上一轮参考图(若本轮未附图,沿用上一轮的 ref 约束)
         - 用于连续反馈修改,避免上下文漂移
         """

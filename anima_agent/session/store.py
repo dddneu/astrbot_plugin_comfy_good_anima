@@ -30,9 +30,6 @@ class SessionContext:
     # 用户后续说「参考图约束太弱/不像」等反馈时,即使不再附图也能复用同一参考图。
     ref_image_filename: Optional[str] = None
     ref_tags: Optional[str] = None
-    # 会话角色记忆:上次参考图打标(角色身份锚点)。后续新图也注入,让一次对话内
-    # 模型「认识」这个角色(发色/瞳色/服装等保持一致)。
-    character_sheet: Optional[str] = None
     # 换 seed 重绘(/redraw):上次**最终提交给 ComfyUI 的 payload**(含自动修正),
     # 原样重发只换 seed;以及重绘任务追踪/提示用的来源信息。
     last_payload: Optional[dict] = None

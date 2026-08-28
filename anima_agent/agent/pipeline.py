@@ -205,7 +205,6 @@ class AgentPipeline:
         ref_image_filename: Optional[str] = None,
         confirmed_artists: Optional[list[str]] = None,
         ref_tags: Optional[str] = None,
-        character_sheet: Optional[str] = None,
         random_artist_mode: str = "pool",
         random_artist_top_n: int = 100,
         random_artist_fixed: str = "",
@@ -288,7 +287,6 @@ class AgentPipeline:
                 draft = await self.draftsman.draft(
                     user_prompt, session_context=ctx, workflow_id=effective_workflow_id,
                     confirmed_artists=confirmed_artists, ref_tags=ref_tags,
-                    character_sheet=character_sheet,
                 )
             except SafetyReject as e:
                 if task_id and self._tracker:

@@ -355,14 +355,6 @@ class AnimaAgentPlugin:
                     f"[handle_draw] 复用上一张参考图 {stored_fn!r}(用户未附图,按参考反馈/修改处理)"
                 )
 
-        # 会话角色记忆:本次没带参考图(也没有复用),但会话里认识某个角色 →
-        # 把角色设定注入出稿,让一次对话内模型保持该角色外观(新图也生效)。
-        character_sheet: Optional[str] = None
-        if not ref_tags:
-            stored_fn, stored_tags = self.sessions.stored_ref(session_id)
-            if stored_tags:
-                character_sheet = stored_tags
-
         # 意图驱动工作流切换（由 intent.py 的 IntentDecision.workflow_id 决定）
         effective_workflow = decision.workflow_id or workflow_id
 
@@ -396,7 +388,6 @@ class AnimaAgentPlugin:
                 ref_image_filename=ref_image_filename,
                 confirmed_artists=confirmed_artists,
                 ref_tags=ref_tags,
-                character_sheet=character_sheet,
                 random_artist_mode=self.random_artist_mode,
                 random_artist_top_n=self.random_artist_top_n,
                 random_artist_fixed=self.random_artist_fixed,
@@ -430,8 +421,6 @@ class AnimaAgentPlugin:
                 last_prompt_id=result.prompt_id,
                 ref_image_filename=ref_image_filename or None,
                 ref_tags=ref_tags or None,
-                # 角色记忆:本次打标优先;没打标则沿用会话已认识的(换角色时会被新打标覆盖)
-                character_sheet=ref_tags or character_sheet or None,
                 # 换 seed 重绘(/redraw):存最终提交给 ComfyUI 的 payload,原样重发只换 seed
                 last_payload=result.submitted_payload,
                 submitted_positive=result.submitted_positive,
@@ -587,7 +576,6 @@ class AnimaAgentPlugin:
                 last_prompt_id=last_prompt_id,
                 ref_image_filename=ctx.ref_image_filename,
                 ref_tags=ctx.ref_tags,
-                character_sheet=ctx.character_sheet,
                 last_payload=last_payload,
                 submitted_positive=_submitted_positive_text(
                     last_payload, ctx.submitted_positive

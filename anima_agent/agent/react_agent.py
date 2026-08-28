@@ -176,7 +176,6 @@ class SimpleAgent:
         workflow_id: str = "",
         confirmed_artists: Optional[list[str]] = None,
         ref_tags: Optional[str] = None,
-        character_sheet: Optional[str] = None,
         model_size: Optional[Literal["big", "small"]] = None,
     ) -> DraftResult:
         """一次性出稿。
@@ -187,7 +186,6 @@ class SimpleAgent:
             workflow_id: 工作流 ID，用于模式注入
             confirmed_artists: 标签库确认的画师名
             ref_tags: 参考图打标结果
-            character_sheet: 会话角色记忆
             model_size: "big" | "small" (default: self.model_size)
         """
         try:
@@ -198,7 +196,6 @@ class SimpleAgent:
                 workflow_id=workflow_id,
                 confirmed_artists=confirmed_artists,
                 ref_tags=ref_tags,
-                character_sheet=character_sheet,
                 model_size=model_size,
             )
         except SafetyReject as e:
@@ -213,7 +210,6 @@ class SimpleAgent:
         workflow_id: str = "",
         confirmed_artists: Optional[list[str]] = None,
         ref_tags: Optional[str] = None,
-        character_sheet: Optional[str] = None,
         model_size: Optional[Literal["big", "small"]] = None,
     ) -> DraftResult:
         effective_nsfw = nsfw if nsfw is not None else self.nsfw
@@ -242,6 +238,7 @@ class SimpleAgent:
                     distilled = (distilled or "").strip()
                     if distilled:
                         distilled_data = extract_json(distilled)
+                        print(distilled_data)
                         if isinstance(distilled_data, dict):
                             if distilled_data.get("structured_intent"):
                                 distilled = str(distilled_data["structured_intent"]).strip()
@@ -322,7 +319,6 @@ class SimpleAgent:
             session_context,
             confirmed_artists,
             ref_tags,
-            character_sheet,
             "",
             confirmed_en_tags,
             nltags,
@@ -374,7 +370,6 @@ class SimpleAgent:
         session_context: Optional[str],
         confirmed_artists: Optional[list[str]] = None,
         ref_tags: Optional[str] = None,
-        character_sheet: Optional[str] = None,
         cn_hint: str = "",
         confirmed_en_tags: Optional[list[str]] = None,
         nltags: Optional[list[str]] = None,
@@ -392,9 +387,6 @@ class SimpleAgent:
         # 3. 参考数据注入 (Data Injection)
         if ref_tags:
             parts.append(f"\n【参考图 WD14 标签】(客观事实，请以此为基础画面依据):\n{ref_tags}")
-
-        if character_sheet:
-            parts.append(f"\n【已知角色设定】(需保持外观特征一致):\n{character_sheet}")
 
         # 4. 前置处理器的强制约束 (Hard Constraints)
         if confirmed_en_tags:
