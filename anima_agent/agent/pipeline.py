@@ -159,6 +159,7 @@ class AgentPipeline:
         nsfw: bool = False,   # Anima 模型用 NSFW 数据训练,开启后画质显著提升
         instantref_params: Optional[dict] = None,  # InstantRef 基线(程序化注入/测试用,面板已无此配置)
         armor_break_prompt: str = "",  # 破甲提示词(配置注入,出稿 system prompt 第一步)
+        llm_model_size: str = "small",  # small=端侧小模型;big=云端大模型
     ):
         self.nsfw = nsfw
         self.instantref_params = dict(instantref_params or {})
@@ -169,6 +170,7 @@ class AgentPipeline:
         self.draftsman = ReActDraftsman(
             llm_complete, self.tags, nsfw=nsfw,
             armor_break_prompt=self.armor_break_prompt,
+            model_size=llm_model_size,
         )
         # 兼容旧测试断言 pipe.draftsman.armor_break_prompt / pipe.react_draftsman.X
         self.react_draftsman = self.draftsman

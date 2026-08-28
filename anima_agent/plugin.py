@@ -110,6 +110,7 @@ class AnimaAgentPlugin:
         random_artist_mode: str = "pool",
         random_artist_top_n: int = 100,
         random_artist_fixed: str = "",
+        llm_model_size: str = "small",
     ):
         """
         Args:
@@ -136,6 +137,7 @@ class AnimaAgentPlugin:
             armor_break_prompt: 破甲提示词(配置注入)。非空时作为出稿 system
                 prompt 的**第一步**(位于安全审查之前)注入 LLM,设定创作基调/
                 解除安全审查的过度拦截;留空不注入。
+            llm_model_size: LLM 出稿模式。small=端侧小模型(暴力降维);big=云端大模型(完整专家级规则)。
         """
         self.client = ComfyUIClient(server_address)
         # enable_llm_review=False:软约束 LLM 审查默认关闭(机器人场景延迟优先),
@@ -148,6 +150,7 @@ class AnimaAgentPlugin:
             nsfw=nsfw,
             instantref_params=instantref_params,
             armor_break_prompt=armor_break_prompt,
+            llm_model_size=llm_model_size,
         )
         self.tracker = TaskTracker(max_per_user=20)
         self.pipeline.set_tracker(self.tracker)

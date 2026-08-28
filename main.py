@@ -454,6 +454,7 @@ class AnimaStar(Star):
             random_artist_mode=str(config.get("random_artist_mode") or "pool"),
             random_artist_top_n=int(config.get("random_artist_top_n") or 100),
             random_artist_fixed=str(config.get("random_artist_fixed") or ""),
+            llm_model_size=str(config.get("llm_model_size") or "small"),
         )
         self.workflow = config.get("workflow") or "anima-txt2img-aesthetic-lora"
         _ref_default = "instantref" in self.workflow or "-ref" in self.workflow
@@ -461,6 +462,10 @@ class AnimaStar(Star):
             f"[配置] 默认工作流: {self.workflow}"
             + ("(参考工作流:需要附图,未附图时自动回退基础版本)" if _ref_default else "")
         )
+        # 模型大小展示
+        llm_ms = str(config.get("llm_model_size") or "small")
+        llm_ms_desc = "端侧小模型" if llm_ms == "small" else "云端大模型"
+        print(f"[配置] LLM 出稿模式: {llm_ms} ({llm_ms_desc})")
         # 随机画师策略展示(便于自检)
         ram = str(config.get("random_artist_mode") or "pool")
         ram_n = int(config.get("random_artist_top_n") or 100)

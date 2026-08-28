@@ -82,5 +82,14 @@
     "description": "固定画师(仅 fixed 模式生效)。填 fjdk 翻译表里的英文 artist tag(不带 @,小写下划线)。例如 ke-ta / hisahiko / kou_hiyoyo。确认后会作为默认画师注入所有未指定画风的新图与重绘",
     "type": "string",
     "default": ""
+  },
+  "llm_model_size": {
+    "description": "LLM 出稿模式。端侧小模型(7B-14B)用 small(暴力降维);云端大模型(GPT-4o/Claude 等)用 big(完整专家级规则)。影响 prompt 详细程度与规则复杂度",
+    "type": "string",
+    "default": "small",
+    "options": [
+      "small",
+      "big"
+    ]
   }
 }

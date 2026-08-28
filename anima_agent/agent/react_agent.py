@@ -11,15 +11,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, Optional
+from collections.abc import Callable
+from typing import Literal, Optional
 
 from anima_agent.agent.compat import maybe_await
 from anima_agent.agent.draftsman import DraftResult
 from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
-from anima_agent.agent.prompts import (
-    build_draftsman_prompt,
-    DRAFT_JSON_SKELETON,
-)
+from anima_agent.agent.prompts import build_draftsman_prompt, DRAFT_JSON_SKELETON
 from anima_agent.agent.utils import extract_json
 from pydantic import ValidationError
 
@@ -134,6 +132,10 @@ TUNE_PARAM_SCOPE = {
 class SimpleAgent:
     """一次性出稿 Agent，保留多轮对话上下文用于修改意图。
 
+    支持 model_size 参数选择 prompt 版本：
+    - "small"（默认）: 小模型版（暴力降维）
+    - "big": 大模型版（完整专家级规则）
+
     注意:此文件已被简化，出稿使用 Draftsman + build_draftsman_prompt。
     """
 
@@ -144,10 +146,12 @@ class SimpleAgent:
         max_steps: int = 6,
         nsfw: bool = False,
         armor_break_prompt: str = "",
+        model_size: Literal["big", "small"] = "small",
     ):
         self.llm_complete = llm_complete
         self.nsfw = nsfw
         self.armor_break_prompt = armor_break_prompt or ""
+        self.model_size = model_size
 
     async def draft(
         self,
@@ -159,6 +163,7 @@ class SimpleAgent:
         confirmed_artists: Optional[list[str]] = None,
         ref_tags: Optional[str] = None,
         character_sheet: Optional[str] = None,
+        model_size: Optional[Literal["big", "small"]] = None,
     ) -> DraftResult:
         """一次性出稿。
 
@@ -169,6 +174,7 @@ class SimpleAgent:
             confirmed_artists: 标签库确认的画师名
             ref_tags: 参考图打标结果
             character_sheet: 会话角色记忆
+            model_size: "big" | "small" (default: self.model_size)
         """
         try:
             return await self._draft_impl(
@@ -179,6 +185,7 @@ class SimpleAgent:
                 confirmed_artists=confirmed_artists,
                 ref_tags=ref_tags,
                 character_sheet=character_sheet,
+                model_size=model_size,
             )
         except SafetyReject as e:
             raise  # 穿透到 pipeline 层处理
@@ -193,8 +200,15 @@ class SimpleAgent:
         confirmed_artists: Optional[list[str]] = None,
         ref_tags: Optional[str] = None,
         character_sheet: Optional[str] = None,
+        model_size: Optional[Literal["big", "small"]] = None,
     ) -> DraftResult:
         effective_nsfw = nsfw if nsfw is not None else self.nsfw
+        _model_size: Literal["big", "small"] = "small"
+        if model_size is not None:
+            _model_size = model_size
+        elif self.model_size in ("big", "small"):
+            _model_size = self.model_size
+        effective_model_size = _model_size
 
         # Edit 模式检测:有参考图 + workflow 是 edit 工作流时走专用出稿
         is_edit_mode = "edit" in workflow_id and ref_tags
@@ -241,6 +255,7 @@ class SimpleAgent:
                         nsfw=effective_nsfw,
                         workflow_id=workflow_id,
                         armor_break_prompt=self.armor_break_prompt,
+                        model_size=effective_model_size,
                     ),
                     msg,
                 )
@@ -345,12 +360,12 @@ class SimpleAgent:
         return "\n".join(parts)
 
     def _parse(self, resp: str) -> DraftResult:
-        data = self._parse_draft_json(resp, mode="normal")
-
-        # 检查安全拒绝
-        intent = data.get("intent", "normal")
-        if intent == "reject":
+        data = extract_json(resp)
+        if data and data.get("intent") == "reject":
             raise SafetyReject(data.get("reject_reason", "内容不符合安全规范"))
+
+        data = self._parse_draft_json(resp, mode="normal")
+        intent = data.get("intent", "normal")
 
         brief = VisualBrief(**self._coerce_brief(data.get("brief")))
         three = ThreeLayerPrompt(
@@ -510,7 +525,7 @@ class SimpleAgent:
                     f"{str(last_err)[:600]}\n"
                     "Reminder: output ONLY the JSON object matching the schema, "
                     "no prose, no markdown fences, no trailing explanation. "
-                    "Field names MUST be exactly: args.left_anchor, args.right_edit, "
+                    "Field names MUST be exactly: parsed_intent, args.left_anchor, args.right_edit, "
                     "args.character_dna_tags, args.edited_tags, args.negative_tags, args.style_modifiers, tag_queries."
                 )
             resp = await maybe_await(self.llm_complete(system_prompt, msg))
@@ -562,6 +577,7 @@ class SimpleAgent:
             assemble_edit_negative,
             assemble_edit_prompt,
         )
+        from anima_agent.agent.prompts.prompts_edit import normalize_prompt_value
         from anima_agent.agent.schemas import (
             AnimaArgs,
             ThreeLayerPrompt,
@@ -576,6 +592,20 @@ class SimpleAgent:
         args_data.setdefault("character_dna_tags", "")
         # edited_tags: LLM 提取的新增/修改离散 tag，Python 端自动加权
         args_data.setdefault("edited_tags", "")
+        for field_name in (
+            "left_anchor",
+            "right_edit",
+            "character_dna_tags",
+            "edited_tags",
+            "style_modifiers",
+            "negative_tags",
+        ):
+            args_data[field_name] = normalize_prompt_value(args_data.get(field_name))
+
+        left_anchor = args_data["left_anchor"]
+        right_edit = args_data["right_edit"]
+        negative_tags = args_data["negative_tags"]
+        style_modifiers = args_data["style_modifiers"]
 
         # 组装分屏 prompt —— pipeline 后续会在前面加质量前缀(safe/nsfw)
         assembled_positive = assemble_edit_prompt(
