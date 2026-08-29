@@ -81,20 +81,20 @@
       "torch_compile": true
     }
   },
-  "41": {
+  "66": {
     "class_type": "LoraLoaderModelOnly",
     "inputs": {
       "model": ["37", 0],
-      "lora_name": "Smooth_Booster_v5.safetensors",
-      "strength_model": 0.5
+      "lora_name": "illustriousXLv01_stabilizer_v1.198.safetensors",
+      "strength_model": 1.0
     }
   },
-  "42": {
+  "67": {
     "class_type": "LoraLoaderModelOnly",
     "inputs": {
-      "model": ["41", 0],
-      "lora_name": "illustriousXLv01_stabilizer_v1.198.safetensors",
-      "strength_model": 0.5
+      "model": ["66", 0],
+      "lora_name": "Smooth_Booster_v5.safetensors",
+      "strength_model": 1.0
     }
   },
   "39": {
@@ -106,7 +106,7 @@
   "38": {
     "class_type": "AnimaLLLiteApply",
     "inputs": {
-      "model": ["42", 0],
+      "model": ["67", 0],
       "model_patch": ["39", 0],
       "image": ["18", 0],
       "mask": ["18", 2],
@@ -136,8 +136,8 @@
       "positive": ["16", 0],
       "negative": ["16", 1],
       "latent_image": ["55", 0],
-      "seed": 0,
-      "steps": 10,
+      "seed": 355448254686714,
+      "steps": 4,
       "cfg": 1.5,
       "sampler_name": "dpmpp_2m_sde",
       "scheduler": "simple",
@@ -154,10 +154,78 @@
       "amount": 5
     }
   },
+  "65": {
+    "class_type": "AnimaBoosterLoader",
+    "inputs": {
+      "model_name": "anima-base-v1.0.safetensors",
+      "sage_attention": "auto",
+      "torch_compile": true
+    }
+  },
+  "64": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": ["65", 0],
+      "lora_name": "anima-highres-aesthetic-boost.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "63": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": ["64", 0],
+      "lora_name": "anima-base-1-masterpiece-v51.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "69": {
+    "class_type": "AnimaLLLiteApply",
+    "inputs": {
+      "model": ["63", 0],
+      "model_patch": ["39", 0],
+      "image": ["18", 0],
+      "mask": ["18", 2],
+      "strength": 1.0,
+      "start_percent": 0.0,
+      "end_percent": 1.0
+    }
+  },
+  "58": {
+    "class_type": "AnimaTeaCache",
+    "inputs": {
+      "model": ["69", 0],
+      "threshold": 0.15,
+      "adaptive_mode": true,
+      "early_steps_factor": 0.4,
+      "late_steps_factor": 1.8,
+      "start_percent": 0.0,
+      "end_percent": 1.0,
+      "cache_device": "cuda",
+      "teacache_version": "v2 (Standard Precise)"
+    }
+  },
+  "59": {
+    "class_type": "FLS_SamplerV4",
+    "inputs": {
+      "model": ["58", 0],
+      "positive": ["16", 0],
+      "negative": ["16", 1],
+      "latent_image": ["40", 0],
+      "seed": 599213368415525,
+      "steps": 6,
+      "cfg": 5.0,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "simple",
+      "denoise": 0.3,
+      "fovea_strength": 3.0,
+      "sharpness": 0.5,
+      "mask_inertia": 0.85
+    }
+  },
   "35": {
     "class_type": "VAEDecode",
     "inputs": {
-      "samples": ["40", 0],
+      "samples": ["59", 0],
       "vae": ["4", 0]
     }
   },

@@ -943,7 +943,12 @@ class AgentPipeline:
                 print(f"[ref_image] {node['class_type']}({nid}) inputs={node['inputs']}")
         return out
 
-    async def _patch_fl_sampler(self, workflow: dict, args: Optional[dict] = None) -> dict:
+    async def _patch_fl_sampler(
+        self,
+        workflow: dict,
+        args: Optional[dict] = None,
+        main_node_id: Optional[str] = None,
+    ) -> dict:
         """FLS_SamplerV4 参数修补:cfg/Sharpness/layer_filter/step_decay。
 
         优先级:LLM 调参(args) > instantref_params(程序化注入) > 模板默认值
@@ -951,6 +956,10 @@ class AgentPipeline:
         cfg:拉高至 6.0-7.5 可显著增强文本服从度,适合多细节任务
         layer_filter:OUT 表示只在 OUT Blocks 高频层注入,锁定底层大构图
         step_decay:步数衰减系数,前中期强引导,后期自由生成
+
+        main_node_id: 只修补该 FLS 节点(由 schema 的 seed/steps 参数指定)。
+        多采样器工作流(如 turbo 草稿 + base 精修)里,调参只应作用于精修段,
+        不能把 turbo 段的 cfg/steps 也拉高。
         """
         if not args and not self.instantref_params:
             return workflow
@@ -972,6 +981,8 @@ class AgentPipeline:
         out = copy.deepcopy(workflow)
         for nid, node in out.items():
             if node.get("class_type") != "FLS_SamplerV4":
+                continue
+            if main_node_id is not None and nid != main_node_id:
                 continue
             inputs = dict(node.get("inputs", {}))
             for arg_key, val in overrides.items():
@@ -1043,13 +1054,35 @@ class AgentPipeline:
             print(f"[ref-train] {cls}({nid}) {overrides[cls]}")
         return out
 
-    async def _patch_workflow_nodes(self, workflow: dict, args: Optional[dict] = None) -> dict:
+    async def _patch_workflow_nodes(
+        self,
+        workflow: dict,
+        args: Optional[dict] = None,
+        workflow_id: str = "",
+    ) -> dict:
         """提交前统一修补:FLSampler(cfg/Sharpness/layer_filter/step_decay) +
         IP-Adapter(end_at/layer_filter/strength) + InstantReferenceLoRA(end_at/layer_filter) +
         ArtistOptions + ReferenceTaggingOptions/ReferenceTrainOptions + 负面排斥词追加。
 
         优先级:LLM 调参(args) > instantref_params(程序化注入) > 模板默认值
+
+        workflow_id: 用于定位主 FLS 采样器(schema 的 seed/steps 参数指向的节点)。
+        多采样器工作流(turbo 草稿 + base 精修)时,FLS 调参只作用于主采样器,
+        避免把 turbo 段的 cfg/steps 也拉高。
         """
+        # 定位主 FLS 采样器:schema 的 seed/steps 指向的节点(通常为精修段)
+        main_fls: Optional[str] = None
+        if workflow_id:
+            try:
+                _, schema = self.injector.load(workflow_id)
+                for key in ("seed", "steps"):
+                    spec = schema.get("parameters", {}).get(key)
+                    if spec and spec.get("node_id"):
+                        main_fls = str(spec["node_id"])
+                        break
+            except Exception:
+                main_fls = None
+
         # 1. 负面排斥词:追加到 CLIPTextEncode(prompt_12) 节点
         if args and args.get("negative_repel"):
             out = copy.deepcopy(workflow)
@@ -1063,7 +1096,7 @@ class AgentPipeline:
         workflow = await self._patch_ref_ipadapter(workflow, args)
         workflow = await self._patch_instant_ref(workflow, args)
         workflow = self._patch_ref_training_options(workflow, args)
-        workflow = await self._patch_fl_sampler(workflow, args)
+        workflow = await self._patch_fl_sampler(workflow, args, main_node_id=main_fls)
         return self._patch_artist_options(workflow, args)
 
     async def _patch_instant_ref(self, workflow: dict, args: Optional[dict] = None) -> dict:
@@ -1155,32 +1188,37 @@ class AgentPipeline:
         if ref_image_filename:
             print(f"[ref_image] 复用 tagger 已上传图片 {ref_image_filename!r}(省一次上传)")
             workflow, _ = self.injector.load(workflow_id)
-            workflow = await self._patch_workflow_nodes(workflow, args)
-            return self.injector.build_payload(
+            workflow = await self._patch_workflow_nodes(workflow, args, workflow_id=workflow_id)
+            payload, effective = self.injector.build_payload(
                 workflow_id, args, seed=seed, workflow=workflow,
                 ref_image_filename=ref_image_filename,
             )
+            return _sync_fls_seeds(payload, effective.get("seed")), effective
 
         if not ref_image:
             workflow, _ = self.injector.load(workflow_id)
-            workflow = await self._patch_workflow_nodes(workflow, args)
-            return self.injector.build_payload(workflow_id, args, seed=seed, workflow=workflow)
+            workflow = await self._patch_workflow_nodes(workflow, args, workflow_id=workflow_id)
+            payload, effective = self.injector.build_payload(
+                workflow_id, args, seed=seed, workflow=workflow
+            )
+            return _sync_fls_seeds(payload, effective.get("seed")), effective
 
         t_upload = time.monotonic()
         http = getattr(self.injector, "_http", None)
         if http is not None:
             try:
                 workflow, _ = self.injector.load(workflow_id)
-                workflow = await self._patch_workflow_nodes(workflow, args)
+                workflow = await self._patch_workflow_nodes(workflow, args, workflow_id=workflow_id)
                 workflow = await self.injector.inject_ref_image_async(
                     workflow, ref_image, self.client.server
                 )
                 # 检查占位符是否真的被替换(上传失败/无占位符时 inject 原样返回)
                 if not _has_ref_placeholder(workflow):
                     print(f"[ref_image] multipart 上传参考图成功(耗时 {time.monotonic()-t_upload:.2f}s)")
-                    return self.injector.build_payload(
+                    payload, effective = self.injector.build_payload(
                         workflow_id, args, seed=seed, workflow=workflow
                     )
+                    return _sync_fls_seeds(payload, effective.get("seed")), effective
                 logger.warning("ref image async inject failed(placeholder remains), fallback to base64")
                 print(f"[ref_image] multipart 上传失败(占位符残留),回退 base64(耗时 {time.monotonic()-t_upload:.2f}s)")
             except Exception as e:
@@ -1189,8 +1227,11 @@ class AgentPipeline:
 
         # 回退:同步 base64 data URL 注入(注意:5MB+ 图会显著变慢,且旧版兼容)
         workflow, _ = self.injector.load(workflow_id)
-        workflow = await self._patch_workflow_nodes(workflow, args)
-        return self.injector.build_payload(workflow_id, args, seed=seed, workflow=workflow, ref_image=ref_image)
+        workflow = await self._patch_workflow_nodes(workflow, args, workflow_id=workflow_id)
+        payload, effective = self.injector.build_payload(
+            workflow_id, args, seed=seed, workflow=workflow, ref_image=ref_image
+        )
+        return _sync_fls_seeds(payload, effective.get("seed")), effective
 
 
 # ---- 内部辅助 ----
@@ -1493,3 +1534,20 @@ def _set_payload_seed(payload: dict, seed: int) -> None:
             replaced += 1
     if replaced == 0:
         logger.warning("redraw: payload 中未找到 seed 输入节点,重绘可能得到相同结果")
+
+
+def _sync_fls_seeds(payload: dict, seed: Optional[int]) -> dict:
+    """多采样器工作流(如 turbo 草稿 + base 精修):把所有 FLS_SamplerV4 的 seed
+    同步为有效 seed。
+
+    schema 只把 seed 注入主采样器(精修段);若不同步,第二段会保持固定 seed,
+    导致每次生成共用同一张草稿构图。
+    """
+    if seed is None:
+        return payload
+    for node in payload.values():
+        if not isinstance(node, dict):
+            continue
+        if node.get("class_type") == "FLS_SamplerV4":
+            node.setdefault("inputs", {})["seed"] = int(seed)
+    return payload

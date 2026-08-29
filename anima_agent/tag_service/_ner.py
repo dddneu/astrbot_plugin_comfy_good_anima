@@ -28,24 +28,70 @@ _CHARACTER_ENTITY_SCHEMA = """{
     "aliases": ["string"]     // 若100%确定，提供2-3个常用官方译名或黑话；不确定或冷门必须为空列表[]
 }"""
 
-_NER_SYSTEM_PROMPT = (
-    "你是一个动漫/游戏角色/作品命名实体识别（NER）专家。"
-    "用户将输入一段生图请求，你的任务是从中提取所有有意义的实体。\n\n"
-    "输出要求：严格 JSON，不要包含任何解释性文字。\n\n"
-    "JSON Schema：\n"
-    f"{{{{\n"
-    f'  "characters": [ {_CHARACTER_ENTITY_SCHEMA} ],\n'
-    '  "negative_elements": ["string"]  // 用户明确排除的元素（如"不要XX"后的词）\n'
-    "}}\n\n"
-    "注意事项：\n"
-    "- 只抽取动漫/游戏/插画相关的角色名、作品名，不要抽取日常词汇。\n"
-    "- context_series：例如「爱丽丝」→ 如果上下文有东方元素则填「东方Project」，无则 null。\n"
-    "- aliases：仅在极高置信时填写（如「银狼」在明日方舟语境下=「朗姆洛·罗辛」，2-3个即可）。"
-    "极度冷门或你无法确定时必须为空列表 []。\n"
-    "- negative_elements：「而不是XX」「不要XX」「排除XX」中的 XX 填入此字段。\n"
-    "- 如果用户只说了动作/风格/场景（如「坐在窗边看书」），没有任何角色名，"
-    "characters 填 []，negative_elements 也填 []。"
-)
+
+# few-shot 示例（空例在前，锚定"无实体立即输出空数组"的行为）
+_NER_FEW_SHOTS = [
+    (
+        "画一个坐在窗边看书的银发女孩，柔光",
+        '{"characters": [], "negative_elements": []}',
+    ),
+    (
+        "画一个赛博朋克风格的城市夜景，霓虹灯",
+        '{"characters": [], "negative_elements": []}',
+    ),
+    (
+        "画初音未来在舞台上唱歌",
+        '{"characters": [{"name": "初音未来", "context_series": null, "aliases": []}], "negative_elements": []}',
+    ),
+    (
+        "画明日方舟的德克萨斯，穿着战斗服",
+        '{"characters": [{"name": "德克萨斯", "context_series": "明日方舟", "aliases": []}], "negative_elements": []}',
+    ),
+    (
+        "画一个原创角色，不要猫耳和尾巴",
+        '{"characters": [], "negative_elements": ["猫耳", "尾巴"]}',
+    ),
+]
+
+
+def _build_ner_system_prompt() -> str:
+    """组装 NER system prompt（含 early-exit 规则与 few-shot 示例）。
+
+    针对小模型推理能力有限的特点：
+    - 「无实体立即停」放在最顶部,避免模型在普通描述里强行提取/编造/反复猜测；
+    - 用 few-shot 锚定"空例优先"的输出习惯,而不是靠最后一条注意事项兜底。
+    """
+    base = (
+        "你是一个动漫/游戏角色与作品命名实体识别（NER）专家。"
+        "从生图请求中抽取明确的角色名或作品名。\n\n"
+        "【最高优先级：没有明确实体就立即停】\n"
+        "如果用户描述里没有任何明确的动漫/游戏角色名或作品名\n"
+        "（例如只描述了动作、风格、场景、外观、服饰等普通内容），\n"
+        "不要强行提取、不要编造、不要反复猜测，直接输出：\n"
+        '{"characters": [], "negative_elements": []}\n\n'
+        "输出要求：严格 JSON，不要包含任何解释性文字。\n\n"
+        "JSON Schema：\n"
+        f"{{{{\n"
+        f'  "characters": [ {_CHARACTER_ENTITY_SCHEMA} ],\n'
+        '  "negative_elements": ["string"]  // 用户明确排除的元素（如"不要XX"后的词）\n'
+        "}}\n\n"
+        "注意事项：\n"
+        "- 只抽取动漫/游戏/插画相关的角色名、作品名，不抽取日常词汇。\n"
+        "- context_series：例如「爱丽丝」→ 如果上下文有东方元素则填「东方Project」，无则 null。\n"
+        "- aliases：仅在极高置信时填写（如「银狼」在明日方舟语境下=「朗姆洛·罗辛」，2-3个即可）。"
+        "极度冷门或你无法确定时必须为空列表 []。\n"
+        "- negative_elements：「而不是XX」「不要XX」「排除XX」中的 XX 填入此字段。\n"
+    )
+
+    shot_blocks = ["## 示例（few-shot）"]
+    for _i, (user_text, output_json) in enumerate(_NER_FEW_SHOTS, 1):
+        shot_blocks.append(
+            f"### 示例 {_i}\n用户：{user_text}\n输出：{output_json}"
+        )
+    return base + "\n" + "\n\n".join(shot_blocks)
+
+
+_NER_SYSTEM_PROMPT = _build_ner_system_prompt()
 
 
 def _parse_json_response(raw: str) -> Optional[dict]:

@@ -17,12 +17,13 @@ OUTPUT JSON SCHEMA:
 
 CRITICAL RULES (VIOLATION CAUSES SYSTEM FAILURE):
 1. ENTITY VARIABLE SUBSTITUTION (ABSOLUTE PRIORITY):
-   - You MUST extract specific character names, series, and artist names into `entity_map`.
-   - The values in `entity_map` MUST be the ORIGINAL TEXT exactly as the user typed them.
-    - In `structured_intent`, DO NOT write Chinese/Japanese names directly.
-   - Use placeholder variables like [ENT_1], [ENT_2], etc., inside the English sentences.
-   - [ILLEGAL]: "A girl named Hatsune Miku from Vocaloid..."
-   - [CORRECT]: "A girl named [ENT_1] from [ENT_2]..."
+   - You MUST extract specific character names, series, and artist names into `entity_map`[cite: 2].
+   - The values in `entity_map` MUST be the ORIGINAL TEXT exactly as the user typed them[cite: 2].
+   - SEPARATE FRANCHISE AND CHARACTER: If the input contains a series/franchise and a character (e.g., "东方的魔理沙"), you MUST split them into TWO separate entities. NEVER merge them.
+   - [ILLEGAL]: {"ENT_1": "东方的魔理沙"}
+   - [CORRECT]: {"ENT_1": "东方", "ENT_2": "魔理沙"}
+   - In `structured_intent`, DO NOT write Chinese/Japanese names directly[cite: 2].
+   - Use placeholder variables like [ENT_1], [ENT_2], etc., inside the English sentences[cite: 2].
 
 2. STRICT ACTION & COMPOSITION FIDELITY (DO NOT HALLUCINATE):
     - NEVER expand, complicate, or add actions that the user did not explicitly request.
@@ -36,7 +37,7 @@ CRITICAL RULES (VIOLATION CAUSES SYSTEM FAILURE):
 
 4. RUTHLESS DENOISING:
    - Completely REMOVE conversational filler (e.g., "帮我画一个", "最好能有").
-    - Translate provided visual elements into English, but DO NOT invent environments, props, or lighting if they are omitted by the user.
+   - Translate provided visual elements into English, but DO NOT invent environments, props, or lighting if they are omitted by the user.
 """
 
 DISTILLER_FEW_SHOTS = [
@@ -82,6 +83,17 @@ DISTILLER_FEW_SHOTS = [
         "content": """{
   "entity_map": {"ENT_1": "wlop"},
     "structured_intent": "The image features two girls sitting back-to-back and resting. One has blonde twin-tail hair, and the other has long straight black hair. They hold katanas. The setting is a ruined post-apocalyptic city. The art style reflects [ENT_1] with ethereal lighting."
+}""",
+    },
+    {
+        "role": "user",
+        "content": "绘制一个东方的魔理沙和明日方舟的星极",
+    },
+    {
+        "role": "assistant",
+        "content": """{
+  "entity_map": {"ENT_1": "东方", "ENT_2": "魔理沙", "ENT_3": "明日方舟", "ENT_4": "星极"},
+  "structured_intent": "The image features [ENT_2] from [ENT_1] and [ENT_4] from [ENT_3]."
 }""",
     },
 ]

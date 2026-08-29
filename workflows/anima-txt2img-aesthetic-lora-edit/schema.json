@@ -59,14 +59,14 @@
       "description": "Batch size (number of variants)"
     },
     "seed": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "seed",
       "required": false,
       "type": "int",
       "description": "Random seed"
     },
     "steps": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "steps",
       "required": false,
       "type": "int",
@@ -87,74 +87,74 @@
       "description": "RTX VSR quality: LOW, MEDIUM, HIGH, ULTRA"
     },
     "fls_sharpness": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "sharpness",
       "required": false,
       "type": "float",
       "description": "FLSampler sharpness (default 0.5)"
     },
     "fls_fovea_strength": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "fovea_strength",
       "required": false,
       "type": "float",
       "description": "FLSampler texture strength (default 3.0)"
     },
     "fls_mask_inertia": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "mask_inertia",
       "required": false,
       "type": "float",
       "description": "FLSampler focus inertia (default 0.85)"
     },
     "fls_cfg": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "cfg",
       "required": false,
       "type": "float",
-      "description": "CFG scale (default 1.0)"
+      "description": "CFG scale (default 5.0)"
     },
     "fls_layer_filter": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "layer_filter",
       "required": false,
       "type": "string",
       "description": "U-Net layer filter"
     },
     "fls_sampler_name": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "sampler_name",
       "required": false,
       "type": "string",
       "description": "Sampler name (default dpmpp_2m_sde)"
     },
     "fls_scheduler": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "scheduler",
       "required": false,
       "type": "string",
       "description": "Scheduler (default simple)"
     },
     "fls_denoise": {
-      "node_id": "40",
+      "node_id": "59",
       "field": "denoise",
       "required": false,
       "type": "float",
-      "description": "Denoise strength (default 1.0)"
+      "description": "Denoise strength (default 0.3)"
     },
     "lora_smooth_strength": {
-      "node_id": "41",
+      "node_id": "67",
       "field": "strength_model",
       "required": false,
       "type": "float",
-      "description": "Smooth_Booster LoRA strength (default 0.5)"
+      "description": "Smooth_Booster LoRA strength (default 1.0)"
     },
     "lora_stabilizer_strength": {
-      "node_id": "42",
+      "node_id": "66",
       "field": "strength_model",
       "required": false,
       "type": "float",
-      "description": "illustriousXL stabilizer LoRA strength (default 0.5)"
+      "description": "illustriousXL stabilizer LoRA strength (default 1.0)"
     },
     "lllite_strength": {
       "node_id": "38",

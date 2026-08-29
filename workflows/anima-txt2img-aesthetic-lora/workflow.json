@@ -15,6 +15,14 @@
       "torch_compile": true
     }
   },
+  "66": {
+    "class_type": "AnimaBoosterLoader",
+    "inputs": {
+      "model_name": "anima-turbo-v1.1.safetensors",
+      "sage_attention": "auto",
+      "torch_compile": true
+    }
+  },
   "15": {
     "class_type": "VAELoader",
     "inputs": {
@@ -44,9 +52,56 @@
   "28": {
     "class_type": "EmptyLatentImage",
     "inputs": {
-      "width": 1024,
-      "height": 1536,
+      "width": 1536,
+      "height": 1024,
       "batch_size": 5
+    }
+  },
+  "68": {
+    "class_type": "FLS_SamplerV4",
+    "inputs": {
+      "model": [
+        "67",
+        0
+      ],
+      "positive": [
+        "11",
+        0
+      ],
+      "negative": [
+        "12",
+        0
+      ],
+      "latent_image": [
+        "28",
+        0
+      ],
+      "seed": 371292754012397,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "fovea_strength": 3.0,
+      "sharpness": 0.5,
+      "mask_inertia": 0.85
+    }
+  },
+  "67": {
+    "class_type": "AnimaTeaCache",
+    "inputs": {
+      "model": [
+        "66",
+        0
+      ],
+      "threshold": 0.15,
+      "adaptive_mode": true,
+      "early_steps_factor": 0.4,
+      "late_steps_factor": 1.8,
+      "start_percent": 0.0,
+      "end_percent": 1.0,
+      "cache_device": "cuda",
+      "teacache_version": "v2 (Standard Precise)"
     }
   },
   "19": {
@@ -65,53 +120,18 @@
         0
       ],
       "latent_image": [
-        "28",
+        "68",
         0
       ],
-      "seed": 0,
-      "steps": 8,
-      "cfg": 1.0,
+      "seed": 1079443893523910,
+      "steps": 6,
+      "cfg": 4.5,
       "sampler_name": "euler",
       "scheduler": "simple",
-      "denoise": 1.0,
+      "denoise": 0.3,
       "fovea_strength": 3.0,
       "sharpness": 0.5,
       "mask_inertia": 0.85
-    }
-  },
-  "8": {
-    "class_type": "VAEDecode",
-    "inputs": {
-      "samples": [
-        "19",
-        0
-      ],
-      "vae": [
-        "15",
-        0
-      ]
-    }
-  },
-  "52": {
-    "class_type": "SaveImage",
-    "inputs": {
-      "images": [
-        "60",
-        0
-      ],
-      "filename_prefix": "anima/%year%-%month%-%day%/anima_base_v1_0-artist_tag-character_tag"
-    }
-  },
-  "60": {
-    "class_type": "RTXVideoSuperResolution",
-    "inputs": {
-      "images": [
-        "8",
-        0
-      ],
-      "resize_type": "scale by multiplier",
-      "resize_type.scale": 2.0,
-      "quality": "ULTRA"
     }
   },
   "61": {
@@ -129,6 +149,41 @@
       "end_percent": 1.0,
       "cache_device": "cuda",
       "teacache_version": "v2 (Standard Precise)"
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "19",
+        0
+      ],
+      "vae": [
+        "15",
+        0
+      ]
+    }
+  },
+  "60": {
+    "class_type": "RTXVideoSuperResolution",
+    "inputs": {
+      "images": [
+        "8",
+        0
+      ],
+      "resize_type": "scale by multiplier",
+      "resize_type.scale": 2.0,
+      "quality": "ULTRA"
+    }
+  },
+  "52": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "60",
+        0
+      ],
+      "filename_prefix": "anima/%year%-%month%-%day%/anima_base_v1_0-artist_tag-character_tag"
     }
   },
   "62": {
@@ -160,8 +215,8 @@
         "63",
         0
       ],
-      "lora_name": "anima-turbo-lora-v0.2.safetensors",
-      "strength_model": 0.7
+      "lora_name": "illustriousXLv01_stabilizer_v1.198.safetensors",
+      "strength_model": 0.25
     }
   },
   "65": {
@@ -171,8 +226,8 @@
         "64",
         0
       ],
-      "lora_name": "anima-turbo-lora-v0.1.safetensors",
-      "strength_model": 0.7
+      "lora_name": "Smooth_Booster_v5.safetensors",
+      "strength_model": 0.25
     }
   }
 }

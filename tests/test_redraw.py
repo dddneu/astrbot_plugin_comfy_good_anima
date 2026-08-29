@@ -121,9 +121,12 @@ async def test_redraw_resubmits_same_payload_new_seed():
     s1 = second["40"]["inputs"]["seed"]
     assert isinstance(s1, int) and s1 != s0, "redraw 必须换 seed"
 
-    # 除 seed 外与上一轮 payload 完全一致(不重建、不走 LLM)
+    # 除 seed 外与上一轮 payload 完全一致(不重建、不走 LLM)。
+    # 两段采样器(40 turbo 草稿 / 59 base 精修)的 seed 会一起同步为新 seed。
     expected = copy.deepcopy(first)
-    expected["40"]["inputs"]["seed"] = s1
+    for node in expected.values():
+        if isinstance(node.get("inputs", {}).get("seed"), (int, float)):
+            node["inputs"]["seed"] = s1
     assert second == expected, "redraw 必须原样重发上一轮 payload,只换 seed"
 
     # 会话 payload 更新为新 seed;连点 /redraw 逐次换 seed

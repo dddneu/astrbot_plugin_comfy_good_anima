@@ -20,85 +20,54 @@ from anima_agent.agent.prompts._shared import (
 # 小模型版常量 (Small Model - 7B-14B)
 # ──────────────────────────────────────────────────────────────────
 
-CREATIVE_RULES = """# 构图与创意规则（填空版）
+CREATIVE_RULES = """# 创作规则（请按以下步骤在内心思考，不要输出思考过程）
 
-## FIELD填写规则（无脑照做）
+**第一步：理解用户描述**
+- 提取：主体（人物/物体）、人数、动作、场景、光线、情感氛围。
+- 用户描述可能很自由，不要套用预设模板，直接根据文字理解。
 
-### brief.subject（必填）
-- 写"人数+角色名"或"人数+外观描述"
-- 例："1girl, silver hair", "2girls, long hair", "1boy, brown eyes"
-- 不要写动作或场景
+**第二步：确定构图信息（brief）**
+- subject：写清“人数 + 角色名或外观特征”，例：“1girl, silver hair, blue eyes”。
+- scene_container：环境、天气、背景物件，可以罗列多个词。
+- action_relation：身体动作，尽量具体到肢体（手、腿、视线）。
+- camera：从 close-up / upper body / cowboy shot / full body 中选择一个。
+- view_angle：从 eye-level / from above / from below / from side 中选择一个。
+- canvas：根据景别和人数选择，常用推荐：
+  - 头像/半身：1024x1024
+  - 单人全身/立绘：1024x1536
+  - 多人互动/横版场景：1536x1024
+  - 竖版海报：864x1536
+  若用户描述特殊，可自行微调尺寸，保持宽高比接近上述常用值。
+- light_direction：描述光源方向，例如“soft sunlight from left”，“backlight with rim light”。
 
-### brief.scene_container（必填）
-- 提取所有的环境、天气、光影和背景元素。
-- 不要只写一个笼统的词，要罗列具体物件。
-- 例："cyberpunk city ruins, heavy rain, neon holograms", "dark forest, glowing mushrooms, fog"
-- 不要写角色动作
+**第三步：拆分三层标签（three_layer）**
+- hard_tags：只写离散的单词或词组，逗号分隔，禁止完整句子。内容应包括：质量词（masterpiece, best quality）、人物外观、服装、场景基本元素。
+- soft_phrases：写动作、情感、氛围的短语，逗号分隔，例如“gentle smile, wind in hair”。
+- nltags_block：写 2-3 句连续的英文，描述空间关系、动作、光线、景深等，禁止列表式标签。
 
-### brief.action_relation（必填）
-- 提取所有的肢体动作和手部细节（极其重要）。
-- 遇到复杂动词必须拆解为具体身体部位（如 arms, hands, legs）。
-- 例："doing a backflip, raising left hand casting fire spell, holding katana in right hand"
-- 不要写场景
+**第四步：填写负面提示词（args.prompt_12）**
+- 必须包含：`worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body`
+- 若用户描述包含手部动作或多人，追加：`, fused fingers, malformed hands, broken joints, merged bodies, cloned face, extra limbs`
 
-### brief.camera（必填）
-- 只选一个：close-up / upper body / cowboy shot / full body
-- 默认用 upper body
-
-### brief.view_angle（必填）
-- 只选一个：eye-level / from above / from below / from side
-- 默认用 eye-level
-
-### brief.canvas（必填）
-- 只写数字：[width, height]
-- 单人立绘用 [1024, 1536]
-- 半身/头像用 [1024, 1024]
-- 多人互动用 [1536, 1024]
-- 手机海报用 [864, 1536]
-
-## THREE_LAYER分离规则（死规定）
-
-### three_layer.hard_tags
-- 只能写：逗号分隔的单词或词组
-- 禁止：完整英文句子
-- 正确：1girl, solo, silver_hair, blue_eyes, school_uniform
-- 错误：a beautiful girl wearing a white dress standing by the window
-
-### three_layer.soft_phrases
-- 写：动作/情感/氛围短语（用逗号或换行分隔）
-- 可以是短语
-- 例：gentle smile, hair随风飘动, warm sunlight
-
-### three_layer.nltags_block
-- 必须以 "Place the character" 或 "Use" 开头
-- 写连续的句子描述
-- 不要写tag列表
-- 例："Place the character slightly off-center. Use soft lighting from the left."
-
-## QUALITY_PREFIX（自动追加，不要重复写）
-- 双LoRA：`masterpiece, very aesthetic, best quality, score_9, score_8, highres, absurdres, newest`
-- 裸模型：`masterpiece, best quality, score_7, safe`
+**第五步：检查输出 JSON**
+- canvas 字段必须是整数数组，如 [1024, 1536]。
+- hard_tags 中没有完整句子。
+- nltags_block 是连续描述，不是标签。
 """
 
-UNIVERSAL_RULES = """# CRITICAL RULES
-=== UNIVERSAL QUALITY & CONFLICT RULES ===
-1. CONFLICT CHECKING (CRITICAL):
-   - ONLY ONE subject count: Never mix "solo" with "2girls" or "multiple boys".
-   - ONLY ONE camera angle: Never mix "close-up" with "full body".
-   - ONLY ONE lighting direction: If using "backlighting", you MUST add "rim light" or "face fill light".
-   - ONLY ONE environment: Do not mix "indoor lighting" with "outdoors".
+UNIVERSAL_RULES = """# 必须遵守的核心规则
 
-2. ANATOMY & NEGATIVE PROMPT (STRICT FORMAT):
-   - Your `negative_tags` MUST ALWAYS start with this exact string:
-     "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body".
-   - IF the intent mentions "hands", "holding", or "action", append: ", fused fingers, malformed hands, broken joints".
-   - IF the intent has multiple characters, append: ", merged bodies, cloned face, extra limbs".
+1. **互斥检查**：
+   - 主体数量只能一个（solo 或 2girls 等，不能同时出现）。
+   - 景别只能一个（close-up 和 full body 不能共存）。
+   - 光源方向唯一，背光时必须补充轮廓光或面部补光。
+   - 室内光源与室外背景不能混用。
 
-3. OUTPUT CHECK (STRICT SEPARATION):
-   - hard_tags must be discrete tags, never full sentences.
-   - nltags_block must start with "Place" or "Use".
-   - COMPLEXITY RULE: If the user describes a very complex scene, put the character details ONLY in `hard_tags`, and put the environmental descriptions ONLY in `soft_phrases` and `nltags_block`. DO NOT mix them.
-   - ACTION EXPANSION: You MUST describe specific limbs (hands, arms, legs) in `brief.action_relation` and `hard_tags` if the user describes a specific pose.
+2. **负面提示词**：必须包含基础身体保护词（见创作规则第四步）。
+
+3. **三层分离**：hard_tags 离散标签，nltags_block 连续描述，不可混淆。
+
+其他细节由系统自动处理，你只需专注于生成合理的 JSON。
 """
 
 TUNE_PARAMS = """## 精细调参指南（args 字段）
@@ -140,46 +109,41 @@ TUNE_PARAMS = """## 精细调参指南（args 字段）
 ```
 """
 
-FAILURE_PATTERNS = """# 防呆规则
-复杂失败模式（E 系列）已由 Python 后置处理自动追加负面词。
-LLM 只需遵守上方 IF-THEN 互斥规则，不需要记忆错误码。
+FAILURE_PATTERNS = """# 常见问题处理提示
+
+若用户描述包含以下情况，请相应调整：
+- 手部动作：在 hard_tags 中加入具体手部描述，并在负面词中加入 fused fingers。
+- 多人场景：在 nltags_block 中明确每个人的位置和互动。
+- 逆光：在 light_direction 中注明 rim light 或 fill light。
+其他复杂失败模式由系统自动处理，你只需保证 JSON 字段完整。
 """
 
-JSON_SKELETON = """# 输出格式
-直接输出以下 JSON 骨架（死规定，字段名不可改）：
+JSON_SKELETON = """# 输出格式（只输出 JSON，不要输出其他文字）
 
 {
   "brief": {
-    "subject": "人数+角色名或外观描述。例：1girl, silver hair",
-    "scene_container": "详细的背景/环境/天气元素",
-    "action_relation": "具体的肢体动作和手部细节",
-    "camera": "只选一个：close-up / upper body / cowboy shot / full body",
-    "view_angle": "只选一个：eye-level / from above / from below / from side",
-    "canvas": "[宽, 高] 数字。例：[1024, 1536]",
-    "light_direction": "光源。例：soft sunlight from left, dramatic rim light"
+    "subject": "1girl, silver hair",
+    "scene_container": "classroom, window, sunlight",
+    "action_relation": "sitting, holding a book",
+    "camera": "upper body",
+    "view_angle": "eye-level",
+    "canvas": [1024, 1536],
+    "light_direction": "soft window light from left"
   },
   "three_layer": {
-    "hard_tags": "逗号分隔的单词或词组。禁止句子。例：1girl, solo, silver_hair, blue_eyes",
-    "soft_phrases": "动作/情感/氛围短语。用逗号或换行分隔。例：gentle smile, wind in hair",
-    "nltags_block": "必须以'Place the character'或'Use'开头。写连续句子。禁止tag列表。"
+    "hard_tags": "1girl, solo, silver hair, blue eyes, school uniform",
+    "soft_phrases": "gentle smile, quiet atmosphere",
+    "nltags_block": "Place the girl by the window. Use soft light from the left. Keep background slightly blurred."
   },
   "args": {
-    "prompt_12": "负向prompt。必含：worst quality, low quality, score_1, score_2, score_3, watermark",
-    "artist_chain": "仅画师融合模式填。逗号分隔画师名，可加权如 wlop, (sakimichan:1.2)",
-    "width": 1024, "height": 1536, "steps": 8,
-    "filename_prefix": "anima/前缀"
+    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, extra fingers, distorted face",
+    "width": 1024,
+    "height": 1536,
+    "steps": 8,
+    "filename_prefix": "anima/example"
   },
-  "tag_queries": [
-    {"id": "角色锚点", "group": "character", "keyword": "角色英文名"}
-  ]
+  "tag_queries": []
 }
-
-# 格式检查（每次输出前对照）
-- [ ] hard_tags 里没有完整句子
-- [ ] nltags_block 以 Place 或 Use 开头
-- [ ] brief.subject 只写人数+外观，不写动作场景
-- [ ] prompt_12 包含 worst quality, low quality
-- [ ] The 'canvas' field MUST be a native JSON array of two integers. DO NOT wrap it in quotes.
 """
 
 EXAMPLES = """# 完整示例
@@ -189,22 +153,24 @@ EXAMPLES = """# 完整示例
 {
   "brief": {
     "subject": "1girl, kanade tachibana",
-    "scene_container": "classroom window",
+    "scene_container": "classroom, window, soft sunlight",
     "action_relation": "sitting quietly, expressionless",
     "camera": "upper body",
     "view_angle": "eye-level",
-    "canvas": [1152, 1536],
+    "canvas": [1024, 1536],
     "light_direction": "soft window light from left"
   },
   "three_layer": {
-    "hard_tags": "1girl, kanade tachibana, angel beats, silver hair, yellow eyes, short hair, school uniform, classroom",
+    "hard_tags": "1girl, solo, kanade tachibana, angel beats, silver hair, yellow eyes, short hair, school uniform",
     "soft_phrases": "quiet atmosphere, soft afternoon light",
-    "nltags_block": "Place Kanade by the classroom window. Use soft window light from the left. Keep her face expressionless with a softly blurred background."
+    "nltags_block": "Place Kanade by the classroom window. Use soft window light from the left. Keep her face expressionless and background slightly blurred."
   },
   "args": {
-    "prompt_12": "worst quality, low quality, score_1, score_2, score_3, watermark, logo, bad anatomy, bad hands, extra fingers, distorted face",
-    "width": 1152, "height": 1536, "steps": 8,
-    "filename_prefix": "anima/kanade_tachibana"
+    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, extra fingers, missing fingers, distorted face",
+    "width": 1024,
+    "height": 1536,
+    "steps": 8,
+    "filename_prefix": "anima/kanade"
   },
   "tag_queries": [
     {"id": "character", "group": "character", "keyword": "kanade tachibana"},
@@ -217,21 +183,23 @@ EXAMPLES = """# 完整示例
 {
   "brief": {
     "subject": "1girl, silver hair, blue eyes",
-    "scene_container": "beach at golden hour",
-    "action_relation": "seated on sand, relaxed, wind in hair",
+    "scene_container": "beach, sunset, golden hour",
+    "action_relation": "seated on sand, relaxed, looking at sunset",
     "camera": "upper body",
     "view_angle": "slight low angle",
     "canvas": [1536, 1024],
-    "light_direction": "warm golden hour backlight"
+    "light_direction": "warm golden hour backlight with rim light"
   },
   "three_layer": {
-    "hard_tags": "1girl, silver hair, blue eyes, long hair, flowy dress, beach, sunset, golden hour",
+    "hard_tags": "1girl, solo, silver hair, blue eyes, long hair, flowy dress, beach, sunset, golden hour",
     "soft_phrases": "warm golden tones, peaceful atmosphere",
-    "nltags_block": "Place the subject seated on the sand, slightly right of center. Use warm backlight from the sunset. Keep her face readable. Add gentle bokeh in background."
+    "nltags_block": "Place the subject seated on the sand, slightly right of center. Use warm backlight from the sunset with rim light on her hair. Keep her face readable and background softly blurred."
   },
   "args": {
-    "prompt_12": "worst quality, low quality, score_1, score_2, score_3, watermark, logo, bad anatomy, bad hands",
-    "width": 1536, "height": 1024, "steps": 8,
+    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, extra fingers, distorted face",
+    "width": 1536,
+    "height": 1024,
+    "steps": 8,
     "filename_prefix": "anima/beach_sunset"
   },
   "tag_queries": []

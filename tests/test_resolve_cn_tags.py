@@ -2,7 +2,7 @@
 
 Stage 1: NER 抽取
 Stage 2: Rank0 精确 / Rank1 前缀（禁止 Rank2 LIKE %cn%）
-Stage 3: 拼音容错兜底（difflib 评分 >0.8）
+拼音兜底已移除；Rank1 支持 context_series 双端包含查询
 """
 
 import sys
@@ -18,7 +18,7 @@ def test_rank0_exact():
 
     ner = NERResult(
         characters=[
-            CharacterEntity(name="爱丽丝", context_series="东方Project", aliases=[]),
+            CharacterEntity(name="阿米娅", context_series="明日方舟", aliases=[]),
         ],
         negative_elements=[],
         success=True,
@@ -72,7 +72,7 @@ def test_rank1_prefix():
         print(f"[INFO] Rank1 prefix: 无命中")
 
 
-def test_pinyin_fallback():
+def test_rank0_or_rank1_hit():
     """Stage 3: 拼音容错兜底（模拟用户打错字）"""
     eng = RetrievalEngine()
     from anima_agent.tag_service._ner import NERResult, CharacterEntity
@@ -135,24 +135,16 @@ def test_multiple_entities():
     print("[PASS] negative_elements 透传正确")
 
 
-def test_forbidden_like_percent():
-    """确认 _retrieval.py 里没有 LIKE '%' 查询（Rank2 已废除）"""
+def test_no_pinyin_fallback_and_context_contains_allowed():
+    """确认拼音兜底已移除；context_series 双端包含查询与动态去噪已启用。"""
     import anima_agent.tag_service._retrieval as ret_mod
-    import re
 
     src = open(ret_mod.__file__, encoding="utf-8").read()
-    # 去掉所有 # 注释和 """...""" docstring
-    src = re.sub(r'""".*?"""', '', src, flags=re.DOTALL)
-    src = re.sub(r"'''.*?'''", '', src, flags=re.DOTALL)
-    src = re.sub(r'#.*$', '', src, flags=re.MULTILINE)
+    assert "_rank2_pinyin_fallback" not in src, "拼音兜底应已移除"
+    assert "calculate_purity_score" in src, "动态去噪算分应存在"
+    assert "context_series" in src, "上下文解锁包含查询应存在"
 
-    # 找实际 SQL 中的禁用模式
-    bad = re.findall(r'LIKE\s+["\']%', src)
-    if bad:
-        print(f"[FAIL] 发现禁用 LIKE '%...: {bad}")
-        assert False, "禁止 LIKE '%...%"
-    else:
-        print("[PASS] 确认没有 LIKE '%...% 查询（Rank2 已废除）")
+
 
 
 if __name__ == "__main__":
@@ -160,12 +152,12 @@ if __name__ == "__main__":
     print("前置翻译节点单元测试")
     print("=" * 60)
 
-    test_forbidden_like_percent()
+    test_no_pinyin_fallback_and_context_contains_allowed()
     test_unresolved()
     test_rank0_exact()
     test_rank0_with_alias()
     test_rank1_prefix()
-    test_pinyin_fallback()
+    test_rank0_or_rank1_hit()
     test_multiple_entities()
 
     print("\n" + "=" * 60)
