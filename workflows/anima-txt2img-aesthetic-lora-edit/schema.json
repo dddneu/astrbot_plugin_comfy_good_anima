@@ -59,14 +59,14 @@
       "description": "Batch size (number of variants)"
     },
     "seed": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "seed",
       "required": false,
       "type": "int",
       "description": "Random seed"
     },
     "steps": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "steps",
       "required": false,
       "type": "int",
@@ -87,81 +87,116 @@
       "description": "RTX VSR quality: LOW, MEDIUM, HIGH, ULTRA"
     },
     "fls_sharpness": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "sharpness",
       "required": false,
       "type": "float",
       "description": "FLSampler sharpness (default 0.5)"
     },
     "fls_fovea_strength": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "fovea_strength",
       "required": false,
       "type": "float",
       "description": "FLSampler texture strength (default 3.0)"
     },
     "fls_mask_inertia": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "mask_inertia",
       "required": false,
       "type": "float",
       "description": "FLSampler focus inertia (default 0.85)"
     },
     "fls_cfg": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "cfg",
       "required": false,
       "type": "float",
-      "description": "CFG scale (default 5.0)"
+      "description": "CFG scale (default 1.5)"
     },
     "fls_layer_filter": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "layer_filter",
       "required": false,
       "type": "string",
       "description": "U-Net layer filter"
     },
     "fls_sampler_name": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "sampler_name",
       "required": false,
       "type": "string",
       "description": "Sampler name (default dpmpp_2m_sde)"
     },
     "fls_scheduler": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "scheduler",
       "required": false,
       "type": "string",
       "description": "Scheduler (default simple)"
     },
     "fls_denoise": {
-      "node_id": "59",
+      "node_id": "40",
       "field": "denoise",
       "required": false,
       "type": "float",
-      "description": "Denoise strength (default 0.3)"
+      "description": "Denoise strength (default 1.0)"
     },
-    "lora_smooth_strength": {
-      "node_id": "67",
-      "field": "strength_model",
+    "lora_masterpiece_strength": {
+      "node_id": "70",
+      "field": "lora_1.strength",
       "required": false,
       "type": "float",
-      "description": "Smooth_Booster LoRA strength (default 1.0)"
+      "description": "anima-base-1-masterpiece-v51 LoRA strength (default 0.5)"
+    },
+    "lora_highres_strength": {
+      "node_id": "70",
+      "field": "lora_2.strength",
+      "required": false,
+      "type": "float",
+      "description": "anima-highres-aesthetic-boost LoRA strength (default 0.5)"
+    },
+    "lora_rl_strength": {
+      "node_id": "70",
+      "field": "lora_3.strength",
+      "required": false,
+      "type": "float",
+      "description": "anima-rl-v0.1 LoRA strength (default 0.5)"
+    },
+    "lora_reina_strength": {
+      "node_id": "70",
+      "field": "lora_4.strength",
+      "required": false,
+      "type": "float",
+      "description": "reina_v1_epoch14 LoRA strength (default 0.2)"
+    },
+    "lora_hands_strength": {
+      "node_id": "70",
+      "field": "lora_5.strength",
+      "required": false,
+      "type": "float",
+      "description": "basic hands LoRA strength (default 0.75)"
+    },
+    "lora_zoda_strength": {
+      "node_id": "70",
+      "field": "lora_6.strength",
+      "required": false,
+      "type": "float",
+      "description": "zoda_v3_anima LoRA strength (default 0.1)"
     },
     "lora_stabilizer_strength": {
-      "node_id": "66",
-      "field": "strength_model",
+      "node_id": "70",
+      "field": "lora_7.strength",
       "required": false,
       "type": "float",
-      "description": "illustriousXL stabilizer LoRA strength (default 1.0)"
+      "description": "illustriousXLv01_stabilizer_v1.198 LoRA strength (default 0.25)"
     },
     "lllite_strength": {
       "node_id": "38",
       "field": "strength",
       "required": false,
       "type": "float",
-      "description": "AnimaLLLiteApply inpaint patch strength (default 1.0)"
+      "description": "AnimaLLLiteApply inpaint patch strength (default 1.25)"
     },
     "lllite_start": {
       "node_id": "38",

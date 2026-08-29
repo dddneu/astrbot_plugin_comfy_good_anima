@@ -1,4 +1,24 @@
 {
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__POSITIVE__",
+      "clip": [
+        "70",
+        1
+      ]
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__NEGATIVE__",
+      "clip": [
+        "70",
+        1
+      ]
+    }
+  },
   "4": {
     "class_type": "VAELoader",
     "inputs": {
@@ -13,18 +33,69 @@
       "device": "default"
     }
   },
-  "2": {
-    "class_type": "CLIPTextEncode",
+  "9": {
+    "class_type": "SaveImage",
     "inputs": {
-      "clip": ["8", 0],
-      "text": "__POSITIVE__"
+      "filename_prefix": "anima/%year%-%month%-%day%/anima_base_v1_0-artist_tag-character_tag",
+      "images": [
+        "10",
+        0
+      ]
     }
   },
-  "3": {
-    "class_type": "CLIPTextEncode",
+  "10": {
+    "class_type": "RTXVideoSuperResolution",
     "inputs": {
-      "clip": ["8", 0],
-      "text": "__NEGATIVE__"
+      "images": [
+        "56",
+        0
+      ],
+      "resize_type": "scale by multiplier",
+      "resize_type.scale": 2,
+      "quality": "ULTRA"
+    }
+  },
+  "16": {
+    "class_type": "InpaintModelConditioning",
+    "inputs": {
+      "noise_mask": true,
+      "positive": [
+        "2",
+        0
+      ],
+      "negative": [
+        "3",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ],
+      "pixels": [
+        "18",
+        0
+      ],
+      "mask": [
+        "18",
+        2
+      ]
+    }
+  },
+  "18": {
+    "class_type": "AILab_ICLoRAConcat",
+    "inputs": {
+      "layout": "left-right",
+      "custom_size": 0,
+      "object_image": [
+        "25",
+        0
+      ],
+      "object_mask": null,
+      "base_image": [
+        "25",
+        0
+      ],
+      "base_mask": null
     }
   },
   "20": {
@@ -36,7 +107,10 @@
   "25": {
     "class_type": "AILab_ImageResize",
     "inputs": {
-      "image": ["20", 0],
+      "image": [
+        "20",
+        0
+      ],
       "custom_width": 0,
       "custom_height": 768,
       "megapixels": 0,
@@ -51,26 +125,34 @@
       "pad_color": "#000000"
     }
   },
-  "18": {
-    "class_type": "AILab_ICLoRAConcat",
+  "35": {
+    "class_type": "VAEDecode",
     "inputs": {
-      "object_image": ["25", 0],
-      "object_mask": null,
-      "base_image": ["25", 0],
-      "base_mask": null,
-      "layout": "left-right",
-      "custom_size": 0
+      "samples": [
+        "40",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ]
     }
   },
-  "16": {
-    "class_type": "InpaintModelConditioning",
+  "36": {
+    "class_type": "AnimaTeaCache",
     "inputs": {
-      "positive": ["2", 0],
-      "negative": ["3", 0],
-      "vae": ["4", 0],
-      "pixels": ["18", 0],
-      "mask": ["18", 2],
-      "noise_mask": true
+      "threshold": 0.15,
+      "teacache_version": "v2 (Standard Precise)",
+      "adaptive_mode": true,
+      "early_steps_factor": 0.4,
+      "late_steps_factor": 1.8,
+      "start_percent": 0,
+      "end_percent": 1,
+      "cache_device": "cuda",
+      "model": [
+        "38",
+        0
+      ]
     }
   },
   "37": {
@@ -81,20 +163,28 @@
       "torch_compile": true
     }
   },
-  "66": {
-    "class_type": "LoraLoaderModelOnly",
+  "38": {
+    "class_type": "AnimaLLLiteApply",
     "inputs": {
-      "model": ["37", 0],
-      "lora_name": "illustriousXLv01_stabilizer_v1.198.safetensors",
-      "strength_model": 1.0
-    }
-  },
-  "67": {
-    "class_type": "LoraLoaderModelOnly",
-    "inputs": {
-      "model": ["66", 0],
-      "lora_name": "Smooth_Booster_v5.safetensors",
-      "strength_model": 1.0
+      "strength": 1.25,
+      "start_percent": 0,
+      "end_percent": 1,
+      "model": [
+        "70",
+        0
+      ],
+      "model_patch": [
+        "39",
+        0
+      ],
+      "image": [
+        "18",
+        0
+      ],
+      "mask": [
+        "18",
+        2
+      ]
     }
   },
   "39": {
@@ -103,158 +193,113 @@
       "name": "anima-lllite-inpainting-v2.safetensors"
     }
   },
-  "38": {
-    "class_type": "AnimaLLLiteApply",
-    "inputs": {
-      "model": ["67", 0],
-      "model_patch": ["39", 0],
-      "image": ["18", 0],
-      "mask": ["18", 2],
-      "strength": 1.0,
-      "start_percent": 0.2,
-      "end_percent": 1.0
-    }
-  },
-  "36": {
-    "class_type": "AnimaTeaCache",
-    "inputs": {
-      "model": ["38", 0],
-      "threshold": 0.15,
-      "adaptive_mode": true,
-      "early_steps_factor": 0.4,
-      "late_steps_factor": 1.8,
-      "start_percent": 0.0,
-      "end_percent": 1.0,
-      "cache_device": "cuda",
-      "teacache_version": "v2 (Standard Precise)"
-    }
-  },
   "40": {
     "class_type": "FLS_SamplerV4",
     "inputs": {
-      "model": ["36", 0],
-      "positive": ["16", 0],
-      "negative": ["16", 1],
-      "latent_image": ["55", 0],
       "seed": 355448254686714,
-      "steps": 4,
+      "steps": 6,
       "cfg": 1.5,
       "sampler_name": "dpmpp_2m_sde",
       "scheduler": "simple",
-      "denoise": 1.0,
-      "fovea_strength": 3.0,
+      "denoise": 1,
+      "fovea_strength": 3,
       "sharpness": 0.5,
-      "mask_inertia": 0.85
+      "mask_inertia": 0.85,
+      "model": [
+        "36",
+        0
+      ],
+      "positive": [
+        "16",
+        0
+      ],
+      "negative": [
+        "16",
+        1
+      ],
+      "latent_image": [
+        "55",
+        0
+      ]
     }
   },
   "55": {
     "class_type": "RepeatLatentBatch",
     "inputs": {
-      "samples": ["16", 2],
-      "amount": 5
-    }
-  },
-  "65": {
-    "class_type": "AnimaBoosterLoader",
-    "inputs": {
-      "model_name": "anima-base-v1.0.safetensors",
-      "sage_attention": "auto",
-      "torch_compile": true
-    }
-  },
-  "64": {
-    "class_type": "LoraLoaderModelOnly",
-    "inputs": {
-      "model": ["65", 0],
-      "lora_name": "anima-highres-aesthetic-boost.safetensors",
-      "strength_model": 1.0
-    }
-  },
-  "63": {
-    "class_type": "LoraLoaderModelOnly",
-    "inputs": {
-      "model": ["64", 0],
-      "lora_name": "anima-base-1-masterpiece-v51.safetensors",
-      "strength_model": 1.0
-    }
-  },
-  "69": {
-    "class_type": "AnimaLLLiteApply",
-    "inputs": {
-      "model": ["63", 0],
-      "model_patch": ["39", 0],
-      "image": ["18", 0],
-      "mask": ["18", 2],
-      "strength": 1.0,
-      "start_percent": 0.0,
-      "end_percent": 1.0
-    }
-  },
-  "58": {
-    "class_type": "AnimaTeaCache",
-    "inputs": {
-      "model": ["69", 0],
-      "threshold": 0.15,
-      "adaptive_mode": true,
-      "early_steps_factor": 0.4,
-      "late_steps_factor": 1.8,
-      "start_percent": 0.0,
-      "end_percent": 1.0,
-      "cache_device": "cuda",
-      "teacache_version": "v2 (Standard Precise)"
-    }
-  },
-  "59": {
-    "class_type": "FLS_SamplerV4",
-    "inputs": {
-      "model": ["58", 0],
-      "positive": ["16", 0],
-      "negative": ["16", 1],
-      "latent_image": ["40", 0],
-      "seed": 599213368415525,
-      "steps": 6,
-      "cfg": 5.0,
-      "sampler_name": "dpmpp_2m_sde",
-      "scheduler": "simple",
-      "denoise": 0.3,
-      "fovea_strength": 3.0,
-      "sharpness": 0.5,
-      "mask_inertia": 0.85
-    }
-  },
-  "35": {
-    "class_type": "VAEDecode",
-    "inputs": {
-      "samples": ["59", 0],
-      "vae": ["4", 0]
+      "amount": 5,
+      "samples": [
+        "16",
+        2
+      ]
     }
   },
   "56": {
     "class_type": "Crop Image TargetSize (JPS)",
     "inputs": {
-      "image": ["35", 0],
-      "target_w": ["25", 2],
-      "target_h": ["25", 3],
+      "image": [
+        "35",
+        0
+      ],
+      "target_w": [
+        "25",
+        2
+      ],
+      "target_h": [
+        "25",
+        3
+      ],
       "crop_position": "right",
       "offset": 0,
       "interpolation": "lanczos",
       "sharpening": 0
     }
   },
-  "10": {
-    "class_type": "RTXVideoSuperResolution",
+  "70": {
+    "class_type": "Power Lora Loader (rgthree)",
     "inputs": {
-      "images": ["56", 0],
-      "resize_type": "scale by multiplier",
-      "resize_type.scale": 2.0,
-      "quality": "ULTRA"
-    }
-  },
-  "9": {
-    "class_type": "SaveImage",
-    "inputs": {
-      "images": ["10", 0],
-      "filename_prefix": "anima/%year%-%month%-%day%/anima_base_v1_0-artist_tag-character_tag"
+      "lora_1": {
+        "on": true,
+        "lora": "anima-base-1-masterpiece-v51.safetensors",
+        "strength": 0.5
+      },
+      "lora_2": {
+        "on": true,
+        "lora": "anima-highres-aesthetic-boost.safetensors",
+        "strength": 0.5
+      },
+      "lora_3": {
+        "on": true,
+        "lora": "anima-rl-v0.1.safetensors",
+        "strength": 0.5
+      },
+      "lora_4": {
+        "on": true,
+        "lora": "reina_v1_epoch14.safetensors",
+        "strength": 0.2
+      },
+      "lora_5": {
+        "on": true,
+        "lora": "basic hands.safetensors",
+        "strength": 0.75
+      },
+      "lora_6": {
+        "on": true,
+        "lora": "zoda_v3_anima.safetensors",
+        "strength": 0.1
+      },
+      "lora_7": {
+        "on": true,
+        "lora": "illustriousXLv01_stabilizer_v1.198.safetensors",
+        "strength": 0.25
+      },
+      "model": [
+        "37",
+        0
+      ],
+      "clip": [
+        "8",
+        0
+      ]
     }
   }
 }

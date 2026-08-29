@@ -24,7 +24,12 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
 
 from anima_agent.comfyui.client import ComfyUIClient, ComfyUIError
-from anima_agent.comfyui.schema_injector import _detect_ext, load_workflow
+from anima_agent.comfyui.schema_injector import (
+    _detect_ext,
+    _is_node_based_workflow,
+    _iter_workflow_nodes,
+    load_workflow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -882,11 +887,18 @@ class RefImageTagger:
     @staticmethod
     def _inject_ref_image(workflow: dict, filename: str) -> None:
         """LoadImage:注入已上传文件名(替换 __REF_IMAGE__ 占位符)。"""
-        for node in workflow.values():
-            if node.get("class_type") == "LoadImage":
-                for field, val in node.get("inputs", {}).items():
-                    if val == "__REF_IMAGE__":
-                        node["inputs"][field] = filename
+        if _is_node_based_workflow(workflow):
+            for node in workflow.get("nodes", []):
+                if node.get("type") == "LoadImage":
+                    for field, val in node.get("inputs", {}).items():
+                        if val == "__REF_IMAGE__":
+                            node["inputs"][field] = filename
+        else:
+            for node in workflow.values():
+                if node.get("class_type") == "LoadImage":
+                    for field, val in node.get("inputs", {}).items():
+                        if val == "__REF_IMAGE__":
+                            node["inputs"][field] = filename
 
     def _attach_text_output(
         self, workflow: dict, info: dict, text_cls: str, source_link: list

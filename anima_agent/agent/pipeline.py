@@ -645,13 +645,13 @@ class AgentPipeline:
 
         draft.three_layer.hard_tags = hard_tags
         # missing 转 nltags(不伪造 tag;用完整句子,避免被 nltags_is_tag_list 检查误判)
-        if batch.missing:
-            concepts = "、".join(batch.missing)
-            sentence = f"画面需自然表现出 {concepts} 的视觉特征。"
-            if draft.three_layer.nltags_block:
-                draft.three_layer.nltags_block += " " + sentence
-            else:
-                draft.three_layer.nltags_block = sentence
+        # if batch.missing:
+        #     concepts = "、".join(batch.missing)
+        #     sentence = f"画面需自然表现出 {concepts} 的视觉特征。"
+        #     if draft.three_layer.nltags_block:
+        #         draft.three_layer.nltags_block += " " + sentence
+        #     else:
+        #         draft.three_layer.nltags_block = sentence
         return draft
 
     @staticmethod
@@ -871,7 +871,7 @@ class AgentPipeline:
         # 工作流里没有 IP-Adapter 节点 → 直接返回(普通流程不产生日志/开销)
         if not any(
             n.get("class_type") in ("AnimaIPAdapterLoader", "AnimaIPAdapterApply")
-            for n in workflow.values()
+            for _, n in _iter_workflow_nodes(workflow)
         ):
             return workflow
         try:
@@ -899,48 +899,85 @@ class AgentPipeline:
                     overrides[arg_key] = v
 
         out = copy.deepcopy(workflow)
-        for nid, node in out.items():
-            ct = node.get("class_type", "")
-            if ct not in ("AnimaIPAdapterLoader", "AnimaIPAdapterApply"):
-                continue
-            spec = info.get(ct, {}).get("input", {}) or {}
-            all_fields = {**(spec.get("required") or {}), **(spec.get("optional") or {})}
-            inputs = dict(node.get("inputs", {}))
+        patched_nodes = []
 
-            for fname, fspec in all_fields.items():
-                if fname in inputs:
-                    # 已填:loader 的模型名统一覆盖为目标模型(模板可能写了旧字段)
-                    if ct == "AnimaIPAdapterLoader" and fname in ("ip_adapter_name", "model_name"):
-                        inputs[fname] = IPADAPTER_MODEL
+        if _is_node_based_workflow(out):
+            # 节点格式:直接遍历 nodes 数组
+            for node in out.get("nodes", []):
+                ct = node.get("type", "")
+                if ct not in ("AnimaIPAdapterLoader", "AnimaIPAdapterApply"):
                     continue
-                # 未填的必填/可选字段:
-                # - Apply 的参考图连接:模板写 ref_image,新版可能叫 ref_images 等 → 重接
-                if ct == "AnimaIPAdapterApply" and _is_image_field(fspec):
-                    conn = inputs.pop("ref_image", None)
-                    if conn is not None:
-                        inputs[fname] = conn
-                        continue
-                override = None
-                if ct == "AnimaIPAdapterLoader" and fname in ("ip_adapter_name", "model_name"):
-                    override = IPADAPTER_MODEL
-                if ct == "AnimaIPAdapterLoader" and fname == "auto_download":
-                    override = False  # 模型已存在,不自动下载
-                if ct == "AnimaIPAdapterApply" and fname == "enabled":
-                    override = True  # 防止新版本默认关闭导致参考失效
-                inputs[fname] = _default_widget_value(fspec, override)
+                spec = info.get(ct, {}).get("input", {}) or {}
+                all_fields = {**(spec.get("required") or {}), **(spec.get("optional") or {})}
+                inputs = dict(node.get("inputs", {}))
 
-            # 应用覆盖(instantref_params 基线 + LLM 调参),带 TUNE_PARAMS 白名单钳制
-            if ct == "AnimaIPAdapterApply":
-                for arg_key, val in overrides.items():
-                    field = IPADAPTER_ARGS_MAP[arg_key]
-                    if field not in all_fields:
+                for fname, fspec in all_fields.items():
+                    if fname in inputs:
+                        if ct == "AnimaIPAdapterLoader" and fname in ("ip_adapter_name", "model_name"):
+                            inputs[fname] = IPADAPTER_MODEL
                         continue
-                    inputs[field] = _clamp_tune_value(arg_key, val, all_fields[field])
-            node["inputs"] = inputs
+                    if ct == "AnimaIPAdapterApply" and _is_image_field(fspec):
+                        conn = inputs.pop("ref_image", None)
+                        if conn is not None:
+                            inputs[fname] = conn
+                            continue
+                    override = None
+                    if ct == "AnimaIPAdapterLoader" and fname in ("ip_adapter_name", "model_name"):
+                        override = IPADAPTER_MODEL
+                    if ct == "AnimaIPAdapterLoader" and fname == "auto_download":
+                        override = False
+                    if ct == "AnimaIPAdapterApply" and fname == "enabled":
+                        override = True
+                    inputs[fname] = _default_widget_value(fspec, override)
 
-        for nid, node in out.items():
-            if node.get("class_type") in ("AnimaIPAdapterLoader", "AnimaIPAdapterApply"):
-                print(f"[ref_image] {node['class_type']}({nid}) inputs={node['inputs']}")
+                if ct == "AnimaIPAdapterApply":
+                    for arg_key, val in overrides.items():
+                        field = IPADAPTER_ARGS_MAP[arg_key]
+                        if field not in all_fields:
+                            continue
+                        inputs[field] = _clamp_tune_value(arg_key, val, all_fields[field])
+                node["inputs"] = inputs
+                patched_nodes.append((str(node.get("id", "")), ct, inputs))
+        else:
+            # 扁平格式
+            for nid, node in out.items():
+                ct = node.get("class_type", "")
+                if ct not in ("AnimaIPAdapterLoader", "AnimaIPAdapterApply"):
+                    continue
+                spec = info.get(ct, {}).get("input", {}) or {}
+                all_fields = {**(spec.get("required") or {}), **(spec.get("optional") or {})}
+                inputs = dict(node.get("inputs", {}))
+
+                for fname, fspec in all_fields.items():
+                    if fname in inputs:
+                        if ct == "AnimaIPAdapterLoader" and fname in ("ip_adapter_name", "model_name"):
+                            inputs[fname] = IPADAPTER_MODEL
+                        continue
+                    if ct == "AnimaIPAdapterApply" and _is_image_field(fspec):
+                        conn = inputs.pop("ref_image", None)
+                        if conn is not None:
+                            inputs[fname] = conn
+                            continue
+                    override = None
+                    if ct == "AnimaIPAdapterLoader" and fname in ("ip_adapter_name", "model_name"):
+                        override = IPADAPTER_MODEL
+                    if ct == "AnimaIPAdapterLoader" and fname == "auto_download":
+                        override = False
+                    if ct == "AnimaIPAdapterApply" and fname == "enabled":
+                        override = True
+                    inputs[fname] = _default_widget_value(fspec, override)
+
+                if ct == "AnimaIPAdapterApply":
+                    for arg_key, val in overrides.items():
+                        field = IPADAPTER_ARGS_MAP[arg_key]
+                        if field not in all_fields:
+                            continue
+                        inputs[field] = _clamp_tune_value(arg_key, val, all_fields[field])
+                node["inputs"] = inputs
+                patched_nodes.append((nid, ct, inputs))
+
+        for nid, ct, inputs in patched_nodes:
+            print(f"[ref_image] {ct}({nid}) inputs={inputs}")
         return out
 
     async def _patch_fl_sampler(
@@ -979,23 +1016,49 @@ class AgentPipeline:
             return workflow
 
         out = copy.deepcopy(workflow)
-        for nid, node in out.items():
-            if node.get("class_type") != "FLS_SamplerV4":
-                continue
-            if main_node_id is not None and nid != main_node_id:
-                continue
-            inputs = dict(node.get("inputs", {}))
-            for arg_key, val in overrides.items():
-                field = FLS_ARGS_MAP[arg_key]
-                if field not in inputs:
+        patched = False
+
+        if _is_node_based_workflow(out):
+            # 节点格式
+            for node in out.get("nodes", []):
+                if node.get("type") != "FLS_SamplerV4":
                     continue
-                clamped = _clamp_tune_value(arg_key, val, None)
-                inputs[field] = clamped
-            node["inputs"] = inputs
-            print(f"[fls] FLS_SamplerV4({nid}) cfg={inputs.get('cfg')}, "
-                  f"sharpness={inputs.get('sharpness')}, "
-                  f"layer_filter={inputs.get('layer_filter')!r}, "
-                  f"step_decay={inputs.get('step_decay')}")
+                nid = str(node.get("id", ""))
+                if main_node_id is not None and nid != main_node_id:
+                    continue
+                inputs = dict(node.get("inputs", {}))
+                for arg_key, val in overrides.items():
+                    field = FLS_ARGS_MAP[arg_key]
+                    if field not in inputs:
+                        continue
+                    clamped = _clamp_tune_value(arg_key, val, None)
+                    inputs[field] = clamped
+                node["inputs"] = inputs
+                print(f"[fls] FLS_SamplerV4({nid}) cfg={inputs.get('cfg')}, "
+                      f"sharpness={inputs.get('sharpness')}, "
+                      f"layer_filter={inputs.get('layer_filter')!r}, "
+                      f"step_decay={inputs.get('step_decay')}")
+                patched = True
+        else:
+            # 扁平格式
+            for nid, node in out.items():
+                if node.get("class_type") != "FLS_SamplerV4":
+                    continue
+                if main_node_id is not None and nid != main_node_id:
+                    continue
+                inputs = dict(node.get("inputs", {}))
+                for arg_key, val in overrides.items():
+                    field = FLS_ARGS_MAP[arg_key]
+                    if field not in inputs:
+                        continue
+                    clamped = _clamp_tune_value(arg_key, val, None)
+                    inputs[field] = clamped
+                node["inputs"] = inputs
+                print(f"[fls] FLS_SamplerV4({nid}) cfg={inputs.get('cfg')}, "
+                      f"sharpness={inputs.get('sharpness')}, "
+                      f"layer_filter={inputs.get('layer_filter')!r}, "
+                      f"step_decay={inputs.get('step_decay')}")
+                patched = True
         return out
 
     def _patch_artist_options(self, workflow: dict, args: Optional[dict] = None) -> dict:
@@ -1013,13 +1076,25 @@ class AgentPipeline:
         if not overrides:
             return workflow
         out = copy.deepcopy(workflow)
-        for nid, node in out.items():
-            if node.get("class_type") != "AnimaArtistOptions":
-                continue
-            for field, val in overrides.items():
-                if field in node.get("inputs", {}):
-                    out[nid]["inputs"][field] = val
-            print(f"[artist] AnimaArtistOptions({nid}) inputs={out[nid]['inputs']}")
+
+        if _is_node_based_workflow(out):
+            for node in out.get("nodes", []):
+                if node.get("type") != "AnimaArtistOptions":
+                    continue
+                nid = str(node.get("id", ""))
+                inputs = node.get("inputs", {})
+                for field, val in overrides.items():
+                    if field in inputs:
+                        inputs[field] = val
+                print(f"[artist] AnimaArtistOptions({nid}) inputs={inputs}")
+        else:
+            for nid, node in out.items():
+                if node.get("class_type") != "AnimaArtistOptions":
+                    continue
+                for field, val in overrides.items():
+                    if field in node.get("inputs", {}):
+                        out[nid]["inputs"][field] = val
+                print(f"[artist] AnimaArtistOptions({nid}) inputs={out[nid]['inputs']}")
         return out
 
     def _patch_ref_training_options(self, workflow: dict, args: Optional[dict] = None) -> dict:
@@ -1044,14 +1119,27 @@ class AgentPipeline:
         if not any(overrides.values()):
             return workflow
         out = copy.deepcopy(workflow)
-        for nid, node in out.items():
-            cls = node.get("class_type", "")
-            if cls not in overrides or not overrides[cls]:
-                continue
-            for field, val in overrides[cls].items():
-                if field in node.get("inputs", {}):
-                    out[nid]["inputs"][field] = val
-            print(f"[ref-train] {cls}({nid}) {overrides[cls]}")
+
+        if _is_node_based_workflow(out):
+            for node in out.get("nodes", []):
+                cls = node.get("type", "")
+                if cls not in overrides or not overrides[cls]:
+                    continue
+                nid = str(node.get("id", ""))
+                inputs = node.get("inputs", {})
+                for field, val in overrides[cls].items():
+                    if field in inputs:
+                        inputs[field] = val
+                print(f"[ref-train] {cls}({nid}) {overrides[cls]}")
+        else:
+            for nid, node in out.items():
+                cls = node.get("class_type", "")
+                if cls not in overrides or not overrides[cls]:
+                    continue
+                for field, val in overrides[cls].items():
+                    if field in node.get("inputs", {}):
+                        out[nid]["inputs"][field] = val
+                print(f"[ref-train] {cls}({nid}) {overrides[cls]}")
         return out
 
     async def _patch_workflow_nodes(
@@ -1087,10 +1175,18 @@ class AgentPipeline:
         if args and args.get("negative_repel"):
             out = copy.deepcopy(workflow)
             repel = args["negative_repel"]
-            for nid, node in out.items():
-                if node.get("class_type") == "CLIPTextEncode" and nid in ("12", "6"):
-                    orig = node["inputs"].get("text", "")
-                    node["inputs"]["text"] = f"{orig}\n{repel}".strip()
+
+            if _is_node_based_workflow(out):
+                for node in out.get("nodes", []):
+                    if node.get("type") == "CLIPTextEncode" and str(node.get("id", "")) in ("12", "6"):
+                        inputs = node.get("inputs", {})
+                        orig = inputs.get("text", "")
+                        inputs["text"] = f"{orig}\n{repel}".strip()
+            else:
+                for nid, node in out.items():
+                    if node.get("class_type") == "CLIPTextEncode" and nid in ("12", "6"):
+                        orig = node["inputs"].get("text", "")
+                        node["inputs"]["text"] = f"{orig}\n{repel}".strip()
             workflow = out
 
         workflow = await self._patch_ref_ipadapter(workflow, args)
@@ -1108,7 +1204,7 @@ class AgentPipeline:
         强度覆盖:LLM 调参(args 里的 instantref_*) > instantref_params(程序化注入)。
         """
         # 工作流里没有 InstantReferenceLoRA 节点 → 直接返回(普通流程不打告警)
-        if not any(n.get("class_type") == INSTANT_REF_CLASS for n in workflow.values()):
+        if not any(n.get("class_type") == INSTANT_REF_CLASS for _, n in _iter_workflow_nodes(workflow)):
             return workflow
         try:
             info = await self._object_info()
@@ -1136,31 +1232,57 @@ class AgentPipeline:
 
         out = copy.deepcopy(workflow)
         patched_any = False
-        for nid, node in out.items():
-            if node.get("class_type") != INSTANT_REF_CLASS:
-                continue
-            inputs = dict(node.get("inputs", {}))
 
-            def _fill(fname, fspec, force_profile=False):
-                nonlocal inputs
-                if fname in inputs or not _is_fillable_widget(fspec):
-                    return
-                override = "anima" if (force_profile and _is_profile_combo(fspec)) else None
-                inputs[fname] = _default_widget_value(fspec, override)
+        if _is_node_based_workflow(out):
+            for node in out.get("nodes", []):
+                if node.get("type") != INSTANT_REF_CLASS:
+                    continue
+                nid = str(node.get("id", ""))
+                inputs = dict(node.get("inputs", {}))
 
-            for fname, fspec in required.items():
-                _fill(fname, fspec, force_profile=True)
-            # profile 可能声明在 optional(确保选中 anima,否则默认可能是 sdxl)
-            for fname, fspec in optional.items():
-                if _is_profile_combo(fspec):
+                def _fill(fname, fspec, force_profile=False):
+                    nonlocal inputs
+                    if fname in inputs or not _is_fillable_widget(fspec):
+                        return
+                    override = "anima" if (force_profile and _is_profile_combo(fspec)) else None
+                    inputs[fname] = _default_widget_value(fspec, override)
+
+                for fname, fspec in required.items():
                     _fill(fname, fspec, force_profile=True)
-            # 应用强度覆盖(带 TUNE_PARAMS 白名单钳制)
-            for arg_key, val in overrides.items():
-                field = INSTANTREF_ARGS_MAP[arg_key]
-                if field in all_spec:
-                    inputs[field] = _clamp_tune_value(arg_key, val, None)
-            node["inputs"] = inputs
-            print(f"[instantref] {INSTANT_REF_CLASS}({nid}) inputs={inputs}")
+                for fname, fspec in optional.items():
+                    if _is_profile_combo(fspec):
+                        _fill(fname, fspec, force_profile=True)
+                for arg_key, val in overrides.items():
+                    field = INSTANTREF_ARGS_MAP[arg_key]
+                    if field in all_spec:
+                        inputs[field] = _clamp_tune_value(arg_key, val, None)
+                node["inputs"] = inputs
+                print(f"[instantref] {INSTANT_REF_CLASS}({nid}) inputs={inputs}")
+                patched_any = True
+        else:
+            for nid, node in out.items():
+                if node.get("class_type") != INSTANT_REF_CLASS:
+                    continue
+                inputs = dict(node.get("inputs", {}))
+
+                def _fill(fname, fspec, force_profile=False):
+                    nonlocal inputs
+                    if fname in inputs or not _is_fillable_widget(fspec):
+                        return
+                    override = "anima" if (force_profile and _is_profile_combo(fspec)) else None
+                    inputs[fname] = _default_widget_value(fspec, override)
+
+                for fname, fspec in required.items():
+                    _fill(fname, fspec, force_profile=True)
+                for fname, fspec in optional.items():
+                    if _is_profile_combo(fspec):
+                        _fill(fname, fspec, force_profile=True)
+                for arg_key, val in overrides.items():
+                    field = INSTANTREF_ARGS_MAP[arg_key]
+                    if field in all_spec:
+                        inputs[field] = _clamp_tune_value(arg_key, val, None)
+                node["inputs"] = inputs
+                print(f"[instantref] {INSTANT_REF_CLASS}({nid}) inputs={inputs}")
             patched_any = True
         if not patched_any:
             logger.warning("工作流未找到 %s 节点", INSTANT_REF_CLASS)
@@ -1276,6 +1398,73 @@ def _strip_ref_suffix(workflow_id: str) -> str:
         if suffix in workflow_id:
             return workflow_id.replace(suffix, "")
     return workflow_id
+
+
+def _is_node_based_workflow(workflow: dict) -> bool:
+    """判断工作流是否为 ComfyUI 节点格式(含 nodes 数组)。
+
+    扁平格式:{"45": {"class_type": "...", "inputs": {...}}, ...}
+    节点格式:{"nodes": [{"id": 45, "type": "...", ...}, ...], ...}
+    """
+    return "nodes" in workflow and isinstance(workflow["nodes"], list)
+
+
+def _iter_workflow_nodes(workflow: dict):
+    """迭代工作流节点,yield (node_id: str, node: dict)。
+
+    支持两种格式:
+    - 扁平格式:{"45": {"class_type": "...", ...}}
+    - 节点格式:{"nodes": [{"id": 45, "type": "...", ...}]}
+
+    统一返回扁平格式的 node 结构(带 "class_type" 字段)。
+    """
+    if _is_node_based_workflow(workflow):
+        for node in workflow.get("nodes", []):
+            nid = str(node.get("id", ""))
+            if not nid:
+                continue
+            # 节点格式:把 "type" 映射为 "class_type",统一访问方式
+            unified = dict(node)
+            unified["class_type"] = node.get("type", "")
+            yield nid, unified
+    else:
+        # 扁平格式:直接迭代
+        for nid, node in workflow.items():
+            yield str(nid), node
+
+
+def _get_workflow_node(workflow: dict, nid: str) -> Optional[dict]:
+    """按节点 ID 获取节点(支持两种格式)。"""
+    for n_id, node in _iter_workflow_nodes(workflow):
+        if n_id == str(nid):
+            return node
+    return None
+
+
+def _set_workflow_node_field(workflow: dict, nid: str, field: str, value) -> bool:
+    """设置节点字段(支持两种格式)。返回是否成功。
+
+    对于节点格式,直接修改 nodes 数组中的节点。
+    """
+    if _is_node_based_workflow(workflow):
+        for node in workflow.get("nodes", []):
+            if str(node.get("id", "")) == str(nid):
+                if field == "class_type":
+                    # class_type 在节点格式中对应 type
+                    node["type"] = value
+                else:
+                    node[field] = value
+                return True
+        return False
+    else:
+        # 扁平格式
+        if str(nid) in workflow:
+            if field == "class_type":
+                workflow[str(nid)]["class_type"] = value
+            else:
+                workflow[str(nid)][field] = value
+            return True
+        return False
 
 
 def _resolve_ref_workflow(workflow_id: str, has_ref: bool) -> str:

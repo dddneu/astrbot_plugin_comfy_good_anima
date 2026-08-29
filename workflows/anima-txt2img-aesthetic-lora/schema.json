@@ -38,14 +38,14 @@
       "description": "Batch size"
     },
     "seed": {
-      "node_id": "19",
+      "node_id": "68",
       "field": "seed",
       "required": false,
       "type": "int",
       "description": "Random seed"
     },
     "steps": {
-      "node_id": "19",
+      "node_id": "68",
       "field": "steps",
       "required": false,
       "type": "int",
@@ -66,46 +66,95 @@
       "description": "RTX VSR quality: LOW, MEDIUM, HIGH, ULTRA"
     },
     "fls_sharpness": {
-      "node_id": "19",
+      "node_id": "68",
       "field": "sharpness",
       "required": false,
       "type": "float",
       "description": "FLSampler 锐度。主体发糊时小幅提高(默认 0.5);过锐/噪点时降低"
     },
     "fls_fovea_strength": {
-      "node_id": "19",
+      "node_id": "68",
       "field": "fovea_strength",
       "required": false,
       "type": "float",
       "description": "FLSampler 纹理强度。纹理不足时小幅提高(默认 3.0)"
     },
     "fls_mask_inertia": {
-      "node_id": "19",
+      "node_id": "68",
       "field": "mask_inertia",
       "required": false,
       "type": "float",
       "description": "FLSampler 焦点惯性。焦点跳动/忽清忽糊时提高(默认 0.85)"
     },
     "fls_cfg": {
-      "node_id": "19",
+      "node_id": "68",
       "field": "cfg",
       "required": false,
       "type": "float",
-      "description": "CFG 引导强度(默认 4.5)。包含多层复杂细节时拉高至 6.0-7.5,增强文本服从度"
+      "description": "CFG 引导强度(默认 1.0)。细节服从度不足时再小幅拉高,勿大幅调高(会过饱和)"
     },
     "fls_layer_filter": {
-      "node_id": "19",
+      "node_id": "68",
       "field": "layer_filter",
       "required": false,
       "type": "string",
       "description": "U-Net 分层过滤(如 OUT 表示只在 OUT Blocks 高频层注入特征)"
     },
     "fls_step_decay": {
-      "node_id": "19",
+      "node_id": "68",
       "field": "step_decay",
       "required": false,
       "type": "float",
       "description": "步数衰减系数(0-1)。非零时后续步逐步降低 cfg,前中期强引导,后期自由生成"
+    },
+    "lora_masterpiece_strength": {
+      "node_id": "72",
+      "field": "lora_0.strength",
+      "required": false,
+      "type": "float",
+      "description": "anima-base-1-masterpiece-v51 LoRA 强度(默认 0.5)"
+    },
+    "lora_highres_strength": {
+      "node_id": "72",
+      "field": "lora_1.strength",
+      "required": false,
+      "type": "float",
+      "description": "anima-highres-aesthetic-boost LoRA 强度(默认 0.5)"
+    },
+    "lora_rl_strength": {
+      "node_id": "72",
+      "field": "lora_2.strength",
+      "required": false,
+      "type": "float",
+      "description": "anima-rl-v0.1 LoRA 强度(默认 0.5)"
+    },
+    "lora_reina_strength": {
+      "node_id": "72",
+      "field": "lora_3.strength",
+      "required": false,
+      "type": "float",
+      "description": "reina_v1_epoch14 LoRA 强度(默认 0.2)"
+    },
+    "lora_hands_strength": {
+      "node_id": "72",
+      "field": "lora_4.strength",
+      "required": false,
+      "type": "float",
+      "description": "basic hands LoRA 强度(默认 0.75)"
+    },
+    "lora_zoda_strength": {
+      "node_id": "72",
+      "field": "lora_5.strength",
+      "required": false,
+      "type": "float",
+      "description": "zoda_v3_anima LoRA 强度(默认 0.1)"
+    },
+    "lora_stabilizer_strength": {
+      "node_id": "72",
+      "field": "lora_6.strength",
+      "required": false,
+      "type": "float",
+      "description": "illustriousXLv01_stabilizer_v1.198 LoRA 强度(默认 0.25)"
     }
   }
 }

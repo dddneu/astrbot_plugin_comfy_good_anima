@@ -45,6 +45,10 @@ CREATIVE_RULES = """# 创作规则
 - hard_tags：只写离散的单词或词组，逗号分隔，禁止完整句子。内容应包括：质量词（masterpiece, best quality）、人物外观、服装、场景基本元素。
 - soft_phrases：写动作、情感、氛围的短语，逗号分隔，例如“gentle smile, wind in hair”。
 - nltags_block：写 2-3 句连续的英文，描述空间关系、动作、光线、景深等，禁止列表式标签。
+- **nltags_block 三条红线（违反即废稿）**：
+  1. 只用纯英文，绝对禁止中文字符。
+  2. 只能使用陈述句描写客观存在的实体、位置、光影。
+  3. 绝对禁止在句首或句尾添加任何总结性、评价性、情绪性的废话。
 
 **第四步：填写负面提示词（args.prompt_12）**
 - 必须包含：`worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body`
@@ -151,23 +155,25 @@ JSON_SKELETON = """# 输出格式（只输出 JSON，不要输出其他文字）
 
 EXAMPLES = """# 完整示例
 
+光影原则：用户没有强求特殊光影时，一律用干净的平光（flat lighting）或自然光（natural ambient light），保持克制；只有赛博朋克/夜景等特殊词汇才使用霓虹背光等复杂光影。
+
 ## 示例 1：单人已知 IP（测试角色识别与普通半身构图）
 用户：「生成天使心跳的立华奏，三无感，教室窗边柔光」
 {
-  "_thought_process": "1. Subject: 1girl kanade tachibana, 2. Scene: classroom window soft sunlight, 3. Canvas: 1024x1536 upper body, 4. Hard tags: silver hair yellow eyes short hair, 5. Soft phrases: quiet expressionless, 6. NLtags: window light left side, 7. Negative: bad anatomy bad hands extra fingers, 8. Tag queries: kanade tachibana, angel beats",
+  "_thought_process": "1. Subject: 1girl kanade tachibana, 2. Scene: classroom plain background, 3. Canvas: 1024x1536 upper body, 4. Hard tags: silver hair yellow eyes short hair, 5. Soft phrases: quiet expressionless, 6. NLtags: evenly lit plain background, 7. Negative: bad anatomy bad hands extra fingers, 8. Tag queries: kanade tachibana, angel beats",
   "brief": {
     "subject": "1girl, kanade tachibana",
-    "scene_container": "classroom, window, soft sunlight",
+    "scene_container": "classroom, plain background",
     "action_relation": "sitting quietly, expressionless",
     "camera": "upper body",
     "view_angle": "eye-level",
     "canvas": [1024, 1536],
-    "light_direction": "soft window light from left"
+    "light_direction": "flat lighting, even illumination"
   },
   "three_layer": {
     "hard_tags": "1girl, solo, kanade tachibana, angel beats, silver hair, yellow eyes, short hair, school uniform",
-    "soft_phrases": "quiet atmosphere, soft afternoon light",
-    "nltags_block": "Place Kanade by the classroom window. Use soft window light from the left. Keep her face expressionless and background slightly blurred."
+    "soft_phrases": "quiet atmosphere",
+    "nltags_block": "Place Kanade sitting in the classroom. Use flat lighting and even illumination to keep the character looking clean and clear."
   },
   "args": {
     "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face",
@@ -185,7 +191,7 @@ EXAMPLES = """# 完整示例
 ## 示例 2：多人动作与画风（测试画师识别）
 用户：「画两个女孩背靠背坐在废墟里，手里拿着太刀，末日城市，Wlop画风」
 {
-  "_thought_process": "1. Subject: 2girls holding katana, 2. Scene: ruined post-apocalyptic city, 3. Canvas: 1536x1024 full body, 4. Hard tags: back-to-back weapons ruins, 5. Soft phrases: tense atmosphere dramatic, 6. NLtags: two girls sitting back to back holding swords, 7. Negative: fused fingers merged bodies, 8. Tag queries: wlop(artist)",
+  "_thought_process": "1. Subject: 2girls holding katana, 2. Scene: ruined post-apocalyptic city, 3. Canvas: 1536x1024 full body, 4. Hard tags: back-to-back weapons ruins, 5. Soft phrases: resting back-to-back, 6. NLtags: soft natural overcast light, 7. Negative: fused fingers merged bodies, 8. Tag queries: wlop(artist)",
   "brief": {
     "subject": "2girls, multiple girls",
     "scene_container": "ruined city, post-apocalyptic, rubble",
@@ -193,12 +199,12 @@ EXAMPLES = """# 完整示例
     "camera": "full body",
     "view_angle": "eye-level",
     "canvas": [1536, 1024],
-    "light_direction": "dramatic lighting, cinematic atmosphere"
+    "light_direction": "natural ambient light, overcast"
   },
   "three_layer": {
     "hard_tags": "2girls, multiple girls, holding katana, back-to-back, ruined city, post-apocalyptic, weapons, rubble",
-    "soft_phrases": "tense atmosphere, dramatic and epic feel",
-    "nltags_block": "Two girls are sitting back-to-back in a ruined city environment. They are actively holding katanas. The lighting is cinematic with dust floating in the air."
+    "soft_phrases": "resting back-to-back, holding katanas",
+    "nltags_block": "Two girls are sitting back-to-back in a ruined city. The environment is lit by soft, natural overcast light."
   },
   "args": {
     "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, fused fingers, malformed hands, broken joints, merged bodies, cloned face, extra limbs",
@@ -255,8 +261,8 @@ EXAMPLES = """# 完整示例
   },
   "three_layer": {
     "hard_tags": "1girl, solo, cat ears, cat girl, white hair, red eyes, bright outdoors",
-    "soft_phrases": "big smile, lively and energetic, happy atmosphere",
-    "nltags_block": "A close-up shot of a cat girl with a big smile. Bright sunlight hits her face from the side. The overall mood is very lively and energetic."
+    "soft_phrases": "big smile, lively and energetic",
+    "nltags_block": "A close-up shot of a cat girl with a big smile. Bright sunlight hits her face from the side."
   },
   "args": {
     "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body",

@@ -38,6 +38,138 @@ _REF_IMAGE_PLACEHOLDER = "__REF_IMAGE__"
 REF_IMAGE_PLACEHOLDER = _REF_IMAGE_PLACEHOLDER
 
 
+def _is_node_based_workflow(workflow: dict) -> bool:
+    """判断工作流是否为 ComfyUI 节点格式(含 nodes 数组)。
+
+    扁平格式:{"45": {"class_type": "...", "inputs": {...}}, ...}
+    节点格式:{"nodes": [{"id": 45, "type": "...", ...}, ...], ...}
+    """
+    return "nodes" in workflow and isinstance(workflow["nodes"], list)
+
+
+def _convert_node_based_to_flat(workflow: dict) -> dict:
+    """将节点格式的工作流转为扁平 API 格式。
+
+    节点格式:{"nodes": [...], "links": {...}}
+    扁平格式:{"node_id": {"class_type": "...", "inputs": {"field": value}}}
+
+    转换策略:
+    - widget 值:从 widgets_values_named 或按顺序从 widgets_values 提取
+    - 连接值:通过 links 映射从源节点获取(仅处理直接连接,非链式)
+    """
+    if not _is_node_based_workflow(workflow):
+        return workflow
+
+    # 构建 link_id -> (source_node_id, source_output_name) 映射
+    # links 格式: {"link_id": [source_id, source_output_idx, target_id, target_input_name, target_input_idx]}
+    link_map: dict[int, tuple[int, str]] = {}
+    for link_id_str, link_data in workflow.get("links", {}).items():
+        if isinstance(link_data, list) and len(link_data) >= 5:
+            link_id = int(link_id_str)
+            source_id = link_data[0]
+            source_output_idx = link_data[1]
+            target_id = link_data[2]
+            target_input_name = link_data[3]
+            # target_input_idx = link_data[4]
+            link_map[link_id] = (source_id, source_output_idx)
+
+    # 构建节点 widget 值的映射
+    # widgets_values_named: {field_name: value}
+    # widgets_values: [val1, val2, ...] 按声明顺序
+    node_widgets: dict[int, dict] = {}
+    for node in workflow.get("nodes", []):
+        nid = node.get("id")
+        if nid is None:
+            continue
+        # 优先用 named 版本
+        if "widgets_values_named" in node:
+            node_widgets[nid] = dict(node["widgets_values_named"])
+        elif "widgets_values" in node:
+            # 需要从 inputs 的顺序推断字段名...暂时用空 dict
+            node_widgets[nid] = {}
+
+    # 构建输出值缓存(用于链接解析)
+    # 输出值来自源节点的 widgets 或链接
+    output_values: dict[tuple[int, str], any] = {}
+    for node in workflow.get("nodes", []):
+        nid = node.get("id")
+        if nid is None:
+            continue
+        # widget 值作为输出
+        widgets = node_widgets.get(nid, {})
+        for field, val in widgets.items():
+            output_values[(nid, field)] = val
+
+    # 构建扁平格式
+    flat = {}
+    for node in workflow.get("nodes", []):
+        nid = str(node.get("id", ""))
+        if not nid:
+            continue
+        node_type = node.get("type", "")
+        inputs_list = node.get("inputs", [])
+
+        # 构建 inputs dict
+        inputs = {}
+        for inp in inputs_list:
+            inp_name = inp.get("name", "")
+            inp_link = inp.get("link")
+            if inp_link is not None and inp_link in link_map:
+                # 从链接获取值
+                source_id, source_output_idx = link_map[inp_link]
+                # 尝试从 output_values 获取
+                key = (source_id, source_output_idx)
+                if key in output_values:
+                    inputs[inp_name] = output_values[key]
+                else:
+                    # 尝试用 source_id 作为节点引用(ComfyUI 常用格式)
+                    inputs[inp_name] = [str(source_id), source_output_idx]
+            # 没有 link 的输入保持原样(widget 值在 widgets 里处理)
+
+        # 添加 widget 值
+        widgets = node_widgets.get(node.get("id"), {})
+        for field, val in widgets.items():
+            inputs[field] = val
+
+        flat[nid] = {
+            "class_type": node_type,
+            "inputs": inputs,
+        }
+
+    return flat
+
+
+def _iter_workflow_nodes(workflow: dict):
+    """迭代工作流节点,yield (node_id: str, node: dict)。
+
+    支持两种格式:
+    - 扁平格式:{"45": {"class_type": "...", ...}}
+    - 节点格式:{"nodes": [{"id": 45, "type": "...", "inputs": [...]}]}
+
+    统一返回带 "class_type" 和 "inputs"(dict 格式)字段的 node 结构。
+    """
+    if _is_node_based_workflow(workflow):
+        for node in workflow.get("nodes", []):
+            nid = str(node.get("id", ""))
+            if not nid:
+                continue
+            # 节点格式:把 "type" 映射为 "class_type"
+            unified = dict(node)
+            unified["class_type"] = node.get("type", "")
+            # inputs 在节点格式中是 [{name, type, link}, ...],转为 {name: value} 或 {name: {link info}}
+            inputs_list = node.get("inputs", [])
+            if isinstance(inputs_list, list):
+                # 转为简单映射,link 信息保留在内部
+                unified["inputs"] = {inp.get("name"): inp for inp in inputs_list}
+            else:
+                unified["inputs"] = inputs_list
+            yield nid, unified
+    else:
+        # 扁平格式:直接迭代
+        for nid, node in workflow.items():
+            yield str(nid), node
+
+
 def list_available_workflows() -> list[str]:
     """扫描 workflows/ 目录,返回可用工作流 id(目录名,按字母序)。
 
@@ -57,7 +189,7 @@ def list_available_workflows() -> list[str]:
 
 def _has_ref_placeholder(workflow: dict) -> bool:
     """workflow 中是否仍存在 __REF_IMAGE__ 占位符(未注入成功)。"""
-    for node in workflow.values():
+    for _, node in _iter_workflow_nodes(workflow):
         for val in node.get("inputs", {}).values():
             if val == _REF_IMAGE_PLACEHOLDER:
                 return True
@@ -144,15 +276,17 @@ class SchemaInjector:
             server_address: ComfyUI 地址,格式 "host:port"。
         """
         target_node_id: Optional[str] = None
-        for node_id, node in workflow.items():
+        target_field: Optional[str] = None
+        for node_id, node in _iter_workflow_nodes(workflow):
             for field, val in node.get("inputs", {}).items():
                 if val == _REF_IMAGE_PLACEHOLDER:
                     target_node_id = node_id
+                    target_field = field
                     break
             if target_node_id:
                 break
 
-        if not target_node_id:
+        if not target_node_id or not target_field:
             return workflow
 
         ext = _detect_ext(image_bytes)
@@ -174,7 +308,13 @@ class SchemaInjector:
 
         if uploaded_name:
             workflow = copy.deepcopy(workflow)
-            workflow[target_node_id]["inputs"]["image"] = uploaded_name
+            if _is_node_based_workflow(workflow):
+                for node in workflow.get("nodes", []):
+                    if str(node.get("id", "")) == target_node_id:
+                        node["inputs"][target_field] = uploaded_name
+                        break
+            else:
+                workflow[target_node_id]["inputs"][target_field] = uploaded_name
 
         return workflow
 
@@ -211,11 +351,18 @@ def _inject_ref_filename(workflow: dict, filename: str) -> dict:
 
 def _replace_ref_placeholder(workflow: dict, value: str) -> dict:
     workflow = copy.deepcopy(workflow)
-    for node_id, node in workflow.items():
-        inputs = node.get("inputs", {})
-        for field, val in inputs.items():
-            if val == _REF_IMAGE_PLACEHOLDER:
-                workflow[node_id]["inputs"][field] = value
+    if _is_node_based_workflow(workflow):
+        for node in workflow.get("nodes", []):
+            inputs = node.get("inputs", {})
+            for field, val in inputs.items():
+                if val == _REF_IMAGE_PLACEHOLDER:
+                    inputs[field] = value
+    else:
+        for node_id, node in workflow.items():
+            inputs = node.get("inputs", {})
+            for field, val in inputs.items():
+                if val == _REF_IMAGE_PLACEHOLDER:
+                    workflow[node_id]["inputs"][field] = value
     return workflow
 
 
@@ -278,9 +425,27 @@ def inject_args(
         node = injected.get(node_id)
         if node is None:
             raise KeyError(f"node {node_id} not in workflow (arg {arg_name})")
-        node.setdefault("inputs", {})[field] = value
+        _set_nested_field(node.setdefault("inputs", {}), field, value)
 
     return injected
+
+
+def _set_nested_field(target: dict, path: str, value: Any) -> None:
+    """按点分路径写入嵌套字段。
+
+    支持形如 "lora_0.strength" 的字段:rgthree Power Lora Loader 的 LoRA 强度
+    是嵌套在 lora_N 对象里的,顶层写入会把 "lora_0.strength" 当成普通键名,
+    注入无效。
+    """
+    parts = path.split(".")
+    cur = target
+    for p in parts[:-1]:
+        nxt = cur.get(p)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[p] = nxt
+        cur = nxt
+    cur[parts[-1]] = value
 
 
 def _coerce(value: Any, type_hint: str) -> Any:
