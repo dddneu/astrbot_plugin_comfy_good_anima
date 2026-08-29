@@ -20,7 +20,10 @@ from anima_agent.agent.prompts._shared import (
 # 小模型版常量 (Small Model - 7B-14B)
 # ──────────────────────────────────────────────────────────────────
 
-CREATIVE_RULES = """# 创作规则（请按以下步骤在内心思考，不要输出思考过程）
+CREATIVE_RULES = """# 创作规则
+
+**在 `_thought_process` 字段中进行思考**（极其简短，单行，禁止换行和双引号）：
+按照格式 "1. Subject: ..., 2. Scene: ..., 3. Canvas: ..., 4. Hard tags: ..., 5. Soft phrases: ..., 6. NLtags block: ..., 7. Negative tags: ..."
 
 **第一步：理解用户描述**
 - 提取：主体（人物/物体）、人数、动作、场景、光线、情感氛围。
@@ -121,6 +124,7 @@ FAILURE_PATTERNS = """# 常见问题处理提示
 JSON_SKELETON = """# 输出格式（只输出 JSON，不要输出其他文字）
 
 {
+  "_thought_process": "1. Subject: ..., 2. Scene: ..., 3. Canvas: ..., 4. Hard tags: ..., 5. Soft phrases: ..., 6. NLtags: ..., 7. Negative: ...",
   "brief": {
     "subject": "1girl, silver hair",
     "scene_container": "classroom, window, sunlight",
@@ -151,6 +155,7 @@ EXAMPLES = """# 完整示例
 ## 普通模式示例
 用户：「生成天使心跳的立华奏，三无感，教室窗边柔光」
 {
+  "_thought_process": "1. Subject: 1girl, kanade tachibana, 2. Scene: classroom window soft sunlight, 3. Canvas: 1024x1536 upper body, 4. Hard tags: silver hair yellow eyes short hair, 5. Soft phrases: quiet expressionless, 6. NLtags: window light left side, 7. Negative: bad anatomy bad hands extra fingers",
   "brief": {
     "subject": "1girl, kanade tachibana",
     "scene_container": "classroom, window, soft sunlight",
@@ -181,6 +186,7 @@ EXAMPLES = """# 完整示例
 ## 参考图模式示例
 用户：「基于参考图，生成角色在海边看日落」
 {
+  "_thought_process": "1. Subject: 1girl silver hair blue eyes, 2. Scene: beach sunset golden hour, 3. Canvas: 1536x1024 full body, 4. Hard tags: silver hair blue eyes long hair flowy dress, 5. Soft phrases: warm golden peaceful, 6. NLtags: seated sand rim light sunset, 7. Negative: bad anatomy bad hands extra fingers",
   "brief": {
     "subject": "1girl, silver hair, blue eyes",
     "scene_container": "beach, sunset, golden hour",
