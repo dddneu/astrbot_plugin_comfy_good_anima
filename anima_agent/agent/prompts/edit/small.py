@@ -7,7 +7,8 @@ Your task is to map 'WD14 Tags' to a BEFORE state (left_anchor) and user 'Intent
 
 OUTPUT JSON SCHEMA:
 {
-  "_thought_process": "1. Intent: (changes). 2. Strategy: (what to keep vs drop). Keep it single-line, NO double quotes.",
+  "step1_intent_decomposition": "Break down the complex user intent into simple English bullet points: 1. [Action] 2. [Clothes] 3. [Background] 4. [Style]. Translate Chinese to English here.",
+  "step2_noise_reduction": "Analyze WD14 tags. State clearly: Keep: [biological traits] | Drop: [conflicts/clothes/bg].",
   "anchor_filtering": {
     "keep_traits": "Extract ONLY biological features & base pose (e.g., pink hair, twintails, cat ears, green eyes, standing).",
     "drop_targets": "Extract ALL clothes, props, and backgrounds (e.g., maid apron, bell, dress, polka dot background)."
@@ -30,114 +31,82 @@ OUTPUT JSON SCHEMA:
 }
 
 CRITICAL RULES:
-1. anchor_filtering (THE FIREWALL):
-  - Small models often copy all tags blindly. You MUST explicitly separate them here first.
-  - `keep_traits` is your SAFE ZONE: Only biological traits (hair, eyes, animal ears, skin) and base pose.
-  - `drop_targets` is your TRASH CAN: Dump all clothes, accessories, backgrounds, and borders here.
-
-2. left_anchor FORMULA (STRICT INHERITANCE):
+1. THE TWO-STEP THINKING: 
+  - You MUST complete `step1_intent_decomposition` and `step2_noise_reduction` first. This is your workspace to digest long inputs.
+2. anchor_filtering (THE FIREWALL):
+  - `keep_traits` is your SAFE ZONE: Only biological traits (hair, eyes, animal ears, skin).
+  - `drop_targets` is your TRASH CAN: Dump all clothes, accessories, backgrounds, and old actions here.
+3. left_anchor FORMULA (STRICT INHERITANCE):
   - Translate the items from `keep_traits` into a fluent English sentence.
   - FATAL ERROR: Never include a single word from `drop_targets` in the left_anchor.
-
-3. right_edit PREFIX RULE:
+4. right_edit PREFIX RULE:
   - IF SAME IDENTITY: Start with "the image is exactly the same, but..."
-  - IF NEW IDENTITY (IP Replacement): Start with "the character has been completely replaced with..."
-
-4. right_edit EXPANSION:
-  - Expand the user's intent into a highly descriptive, vivid paragraph (2-3 sentences).
+  - IF NEW IDENTITY: Start with "the character has been completely replaced with..."
 """
 
 FEW_SHOTS = [
     {
-        # 黄金示例 1：测试显式过滤（把衣服和背景丢进 drop_targets）
+        # 黄金示例 1：测试长指令与复杂意图拆解
         "role": "user",
-        "content": "WD14 Tags: 1girl, solo, black hair, long hair, blunt bangs, red eyes, school uniform, standing, classroom, day\nIntent: 衣服换成那种很帅的黑色机能风风衣，手里拿把狙击枪，背景换成赛博朋克雨夜，千万别出现学生书包或现代台灯。",
+        "content": "WD14 Tags: 1girl, solo, long blonde hair, blue eyes, white summer dress, holding umbrella, rain, standing, city street background, daytime\nIntent: 帮我把她衣服换成华丽的红色哥特式晚礼服，打着一把发光的透明洋伞，背景变成室内的豪华舞厅，有巨大的水晶吊灯，原来那个下雨和城市的背景全部去掉，不要站着了，让她优雅地坐在复古真皮沙发上，整体光影要偏暖色调。",
     },
     {
         "role": "assistant",
         "content": """{
-  "_thought_process": "1. Intent: techwear, sniper, cyberpunk rain. 2. Strategy: keep bio traits, drop uniform and classroom.",
+  "step1_intent_decomposition": "1. Clothes: gorgeous red gothic evening gown. 2. Props: glowing transparent umbrella. 3. Background: luxurious indoor ballroom with massive crystal chandeliers (remove rain and city street). 4. Action: elegantly sitting on a vintage leather sofa (remove standing). 5. Style/Light: warm color tone lighting.",
+  "step2_noise_reduction": "Keep: 1girl, solo, long blonde hair, blue eyes. Drop: white summer dress, holding umbrella (needs update), rain, standing (action changed), city street background, daytime.",
   "anchor_filtering": {
-    "keep_traits": "1girl, solo, black hair, long hair, blunt bangs, red eyes, standing",
-    "drop_targets": "school uniform, classroom, day"
+    "keep_traits": "1girl, solo, long blonde hair, blue eyes",
+    "drop_targets": "white summer dress, holding umbrella, rain, standing, city street background, daytime"
   },
   "parsed_intent": {
-    "action_change": "holding a sniper rifle",
-    "clothing_props": "black techwear trench coat, sci-fi sniper rifle",
-    "environment": "cyberpunk city street on a rainy night, glowing neon signs",
-    "style_lighting": "cinematic lighting"
+    "action_change": "elegantly sitting on a vintage leather sofa",
+    "clothing_props": "gorgeous red gothic evening gown, glowing transparent umbrella",
+    "environment": "luxurious indoor ballroom, massive crystal chandeliers",
+    "style_lighting": "warm color tone lighting"
   },
   "args": {
-    "left_anchor": "a girl with long black hair, blunt bangs, and red eyes stands",
-    "right_edit": "the image is exactly the same, but the girl is now wearing a cool black techwear trench coat and holding a sci-fi sniper rifle. The background has been completely transformed into a cyberpunk city street on a rainy night with glowing neon signs",
-    "character_dna_tags": "1girl, solo, black_hair, long_hair, red_eyes",
-    "edited_tags": "techwear, black coat, sniper rifle, cyberpunk, rain, night, neon lights",
-    "negative_tags": "school uniform, classroom, day, schoolbag, modern lamp, worst quality, low quality",
-    "style_modifiers": "cinematic style"
+    "left_anchor": "a girl with long blonde hair and blue eyes",
+    "right_edit": "the image is exactly the same, but the girl is now elegantly sitting on a vintage leather sofa. She is wearing a gorgeous red gothic evening gown and holding a glowing transparent umbrella. The scene has completely changed to a luxurious indoor ballroom illuminated by warm color tone lighting from massive crystal chandeliers",
+    "character_dna_tags": "1girl, solo, blonde_hair, long_hair, blue_eyes",
+    "edited_tags": "sitting on sofa, vintage leather sofa, red gothic evening gown, glowing transparent umbrella, indoor ballroom, crystal chandeliers, warm lighting",
+    "negative_tags": "white summer dress, rain, standing, city street, daytime, worst quality, low quality",
+    "style_modifiers": "warm tone lighting"
   },
   "tag_queries": []
 }""",
     },
     {
-        # 黄金示例 2：测试动作改变时的过滤（连原本的 standing 也丢进 drop_targets）
+        # 黄金示例 2：测试完全 IP 替换的降噪
         "role": "user",
-        "content": "WD14 Tags: 1boy, solo, short hair, messy hair, green eyes, casual clothes, standing, looking at viewer, simple background\nIntent: 让他骑在重型摩托车上狂飙，周围是爆炸的火焰和黑烟",
+        "content": "WD14 Tags: 1girl, pink hair, twintails, cat ears, maid apron, holding tray, cafe background\nIntent: 彻底换成初音未来，穿着经典的官方公式服，站在绚丽的赛博朋克演唱会舞台上，周围有全息投影和欢呼的人群。",
     },
     {
         "role": "assistant",
         "content": """{
-  "_thought_process": "1. Intent: ride motorcycle, explosions. 2. Strategy: keep head features, drop clothes, bg, and 'standing' since action changes.",
+  "step1_intent_decomposition": "1. Character: completely replace with Hatsune Miku. 2. Clothes: classic official vocaloid outfit. 3. Background: brilliant cyberpunk concert stage. 4. Extras: holographic projections, cheering crowd.",
+  "step2_noise_reduction": "Keep: 1girl. Drop: pink hair, twintails, cat ears, maid apron, holding tray, cafe background (entire identity and environment is being replaced).",
   "anchor_filtering": {
-    "keep_traits": "1boy, solo, short hair, messy hair, green eyes, looking at viewer",
-    "drop_targets": "casual clothes, standing, simple background"
+    "keep_traits": "1girl",
+    "drop_targets": "pink hair, twintails, cat ears, maid apron, holding tray, cafe background"
   },
   "parsed_intent": {
-    "action_change": "riding a motorcycle, leaning forward, steering",
-    "clothing_props": "heavy motorcycle, speeding bike",
-    "environment": "fiery explosions, thick black smoke",
-    "style_lighting": "intense action atmosphere"
+    "action_change": "standing on stage performing",
+    "clothing_props": "classic official outfit",
+    "environment": "brilliant cyberpunk concert stage, holographic projections, cheering crowd",
+    "style_lighting": "vibrant concert lighting"
   },
   "args": {
-    "left_anchor": "a boy with short messy hair and green eyes looks at the viewer",
-    "right_edit": "the image is exactly the same, but the boy is now aggressively riding a heavy, speeding motorcycle. The background has erupted into a chaotic scene of fiery explosions and thick black smoke",
-    "character_dna_tags": "1boy, solo, short_hair, green_eyes",
-    "edited_tags": "riding motorcycle, heavy motorcycle, speeding, explosions, fire, black smoke, action scene, intense",
-    "negative_tags": "standing, simple background, casual clothes, worst quality, low quality",
-    "style_modifiers": "action cinematic style"
-  },
-  "tag_queries": []
-}""",
-    },
-    {
-        # 黄金示例 3：测试复杂 Tag 堆砌（类似你遇到的 maid apron, polka dot 灾难）
-        "role": "user",
-        "content": "WD14 Tags: 1girl, pink hair, purple hair, long hair, twintails, hair between eyes, cat ears, cat girl, green eyes, blue bow, ribbon, fangs, maid apron, dress, polka dot background, border\nIntent: 彻底换成明日方舟的德克萨斯，穿着黑帮西装，手里拿着发光的双剑，背景下着大雪。",
-    },
-    {
-        "role": "assistant",
-        "content": """{
-  "_thought_process": "1. Intent: Texas (Arknights), mafia suit, snow. 2. Strategy: keep bio traits (cat ears, hair, eyes), drop all maid clothes and borders.",
-  "anchor_filtering": {
-    "keep_traits": "1girl, pink hair, purple hair, long hair, twintails, hair between eyes, cat ears, cat girl, green eyes, fangs",
-    "drop_targets": "blue bow, ribbon, maid apron, dress, polka dot background, border"
-  },
-  "parsed_intent": {
-    "action_change": "holding dual swords",
-    "clothing_props": "mafia suit, glowing dual swords",
-    "environment": "heavy snowfall, freezing winter",
-    "style_lighting": "glowing weapons lighting up the scene"
-  },
-  "args": {
-    "left_anchor": "A cat girl with long twintails mixed with pink and purple hair, hair between eyes, green eyes, and fangs",
-    "right_edit": "the character has been completely replaced with Texas from Arknights, wearing her canonical mafia-style suit and holding glowing dual swords. The scene is now set in a freezing winter environment during a heavy snowfall",
-    "character_dna_tags": "1girl, solo, cat_girl",
-    "edited_tags": "mafia suit, glowing swords, dual wielding, snow, winter, cinematic lighting",
-    "negative_tags": "blue bow, ribbon, maid apron, dress, polka dot background, border, worst quality, low quality",
-    "style_modifiers": ""
+    "left_anchor": "a girl",
+    "right_edit": "the character has been completely replaced with Hatsune Miku wearing her classic official outfit. She is standing and performing on a brilliant cyberpunk concert stage, surrounded by glowing holographic projections and a cheering crowd",
+    "character_dna_tags": "1girl, solo",
+    "edited_tags": "cyberpunk concert stage, holographic projections, cheering crowd, performing on stage",
+    "negative_tags": "pink hair, twintails, cat ears, maid apron, cafe background, worst quality, low quality",
+    "style_modifiers": "vibrant concert lighting"
   },
   "tag_queries": [
-    {"id": "char_texas", "group": "character", "keyword": "texas"},
-    {"id": "series_arknights", "group": "series", "keyword": "arknights"}
+    {"id": "char_miku", "group": "character", "keyword": "hatsune miku"},
+    {"id": "series_vocaloid", "group": "series", "keyword": "vocaloid"}
   ]
 }""",
     }

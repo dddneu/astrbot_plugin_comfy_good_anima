@@ -22,40 +22,33 @@ from anima_agent.agent.prompts._shared import (
 
 CREATIVE_RULES = """# 创作规则
 
-**在 `_thought_process` 字段中进行思考**（极其简短，单行，禁止换行和双引号）：
-按照格式 "1. Subject: ..., 2. Scene: ..., 3. Canvas: ..., 4. Hard tags: ..., 5. Soft phrases: ..., 6. NLtags: ..., 7. Negative: ..., 8. Tag queries: (写下识别到的IP/画师，无则写None)"
+**强制前置思考（必须在生成画面数据前完成）：**
+- `step1_intent_decomposition`: 将用户的复杂中文需求拆解并翻译为纯英文的要点清单：1. Subject (Who & Looks) 2. Action & Props (Doing what) 3. Environment (Where) 4. Style & Lighting 5. IP/Artist (if any).
+- `step2_attribute_routing`: 明确各个要点的去向。声明哪些属于 `hard_tags`（人物/服装/基础元素），哪些属于 `nltags_block`（动作/空间关系），哪些提取给 `tag_queries`（画师/IP）。
 
-**第一步：理解用户描述并提取核心实体**
-- 提取：主体、动作、场景、光线。  
-- 强制识别：用户是否提到了特定的「角色名(character)」、「作品名(series)」或「画师名(artist)」？
-
-**第二步：确定构图信息（brief）**
+**第一步：确定构图信息（brief）**
 - subject：写清“人数 + 角色名或外观特征”，例：“1girl, silver hair, blue eyes”。
 - scene_container：环境、天气、背景物件，可以罗列多个词。
 - action_relation：身体动作，尽量具体到肢体（手、腿、视线）。
 - camera：从 close-up / upper body / cowboy shot / full body 中选择一个。
 - view_angle：从 eye-level / from above / from below / from side 中选择一个。
-- canvas：根据景别和人数选择，常用推荐：
-  - 头像/半身：1024x1024
-  - 单人全身/立绘：1024x1536
-  - 多人互动/横版场景：1536x1024
-  - 竖版海报：864x1536
+- canvas：根据景别和人数选择（常用推荐见下）。
 
-**第三步：拆分三层标签（three_layer）**
-- hard_tags：只写离散的单词或词组，逗号分隔，禁止完整句子。内容应包括：质量词（masterpiece, best quality）、人物外观、服装、场景基本元素。
-- soft_phrases：写动作、情感、氛围的短语，逗号分隔，例如“gentle smile, wind in hair”。
-- nltags_block：写 2-3 句连续的英文，描述空间关系、动作、光线、景深等，禁止列表式标签。
+**第二步：拆分三层标签（three_layer）**
+- hard_tags：只写离散的单词或词组，逗号分隔。内容应包括：质量词、人物外观、服装、场景基本元素。
+- soft_phrases：写动作、情感、氛围的短语，逗号分隔。
+- nltags_block：写 2-3 句连续的英文，描述空间关系、动作、光线、景深等。
 - **nltags_block 三条红线（违反即废稿）**：
   1. 只用纯英文，绝对禁止中文字符。
   2. 只能使用陈述句描写客观存在的实体、位置、光影。
   3. 绝对禁止在句首或句尾添加任何总结性、评价性、情绪性的废话。
 
-**第四步：填写负面提示词（args.prompt_12）**
+**第三步：填写负面提示词（args.prompt_12）**
 - 必须包含：`worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body`
 - 若用户描述包含手部动作或多人，追加：`, fused fingers, malformed hands, broken joints, merged bodies, cloned face, extra limbs`
 
-**第五步：组装 Tag Queries**
-- 将第一步提取到的实体严格按照 `{"id": "类别", "group": "类别", "keyword": "具体英文名"}` 的格式填入。若没有明确的动漫/游戏/画师实体，必须保留为空数组 `[]`。
+**第四步：组装 Tag Queries**
+- 严格按照 `{"id": "类别", "group": "类别", "keyword": "具体英文名"}` 格式填入。无实体必须保留为空数组 `[]`。
 """
 
 UNIVERSAL_RULES = """# 必须遵守的核心规则
@@ -66,7 +59,7 @@ UNIVERSAL_RULES = """# 必须遵守的核心规则
    - 光源方向唯一，背光时必须补充轮廓光或面部补光。
    - 室内光源与室外背景不能混用。
 
-2. **负面提示词**：必须包含基础身体保护词（见创作规则第四步）。
+2. **负面提示词**：必须包含基础身体保护词（见创作规则第三步）。
 
 3. **三层分离**：hard_tags 离散标签，nltags_block 连续描述，不可混淆。
 
@@ -124,7 +117,8 @@ FAILURE_PATTERNS = """# 常见问题处理提示
 JSON_SKELETON = """# 输出格式（只输出 JSON，不要输出其他文字）
 
 {
-  "_thought_process": "1. Subject: ..., 2. Scene: ..., 3. Canvas: ..., 4. Hard tags: ..., 5. Soft phrases: ..., 6. NLtags: ..., 7. Negative: ..., 8. Tag queries: kanade tachibana(character), angel beats(series)",
+  "step1_intent_decomposition": "1. Subject: 1girl, kanade tachibana, silver hair, blue eyes. 2. Action: sitting, holding book. 3. Environment: classroom, window. 4. Style/Light: soft sunlight. 5. IP: angel beats.",
+  "step2_attribute_routing": "hard_tags <- kanade, silver hair, school uniform. nltags_block <- sitting by window, soft light. tag_queries <- kanade tachibana, angel beats.",
   "brief": {
     "subject": "1girl, kanade tachibana",
     "scene_container": "classroom, window, sunlight",
@@ -155,12 +149,13 @@ JSON_SKELETON = """# 输出格式（只输出 JSON，不要输出其他文字）
 
 EXAMPLES = """# 完整示例
 
-光影原则：用户没有强求特殊光影时，一律用干净的平光（flat lighting）或自然光（natural ambient light），保持克制；只有赛博朋克/夜景等特殊词汇才使用霓虹背光等复杂光影。
+光影原则：用户没有强求特殊光影时，一律用干净的平光（flat lighting）或自然光（natural ambient light），保持克制；只有赛博朋克/夜景等特殊词汇才使用复杂光影。
 
 ## 示例 1：单人已知 IP（测试角色识别与普通半身构图）
 用户：「生成天使心跳的立华奏，三无感，教室窗边柔光」
 {
-  "_thought_process": "1. Subject: 1girl kanade tachibana, 2. Scene: classroom plain background, 3. Canvas: 1024x1536 upper body, 4. Hard tags: silver hair yellow eyes short hair, 5. Soft phrases: quiet expressionless, 6. NLtags: evenly lit plain background, 7. Negative: bad anatomy bad hands extra fingers, 8. Tag queries: kanade tachibana, angel beats",
+  "step1_intent_decomposition": "1. Subject: 1girl, kanade tachibana, silver hair, yellow eyes, short hair, school uniform. 2. Action: sitting quietly, expressionless. 3. Environment: classroom, plain background. 4. Style/Light: flat lighting, even illumination. 5. IP: angel beats.",
+  "step2_attribute_routing": "hard_tags <- kanade tachibana, silver hair, yellow eyes, school uniform. nltags_block <- sitting in classroom, flat lighting. tag_queries <- kanade tachibana, angel beats.",
   "brief": {
     "subject": "1girl, kanade tachibana",
     "scene_container": "classroom, plain background",
@@ -191,7 +186,8 @@ EXAMPLES = """# 完整示例
 ## 示例 2：多人动作与画风（测试画师识别）
 用户：「画两个女孩背靠背坐在废墟里，手里拿着太刀，末日城市，Wlop画风」
 {
-  "_thought_process": "1. Subject: 2girls holding katana, 2. Scene: ruined post-apocalyptic city, 3. Canvas: 1536x1024 full body, 4. Hard tags: back-to-back weapons ruins, 5. Soft phrases: resting back-to-back, 6. NLtags: soft natural overcast light, 7. Negative: fused fingers merged bodies, 8. Tag queries: wlop(artist)",
+  "step1_intent_decomposition": "1. Subject: 2girls, holding katanas, back-to-back. 2. Action: sitting back-to-back, resting. 3. Environment: ruined post-apocalyptic city. 4. Style/Light: natural ambient light, overcast. 5. IP/Artist: wlop.",
+  "step2_attribute_routing": "hard_tags <- 2girls, katanas, ruined city, rubble. nltags_block <- sitting back-to-back, overcast light. tag_queries <- wlop.",
   "brief": {
     "subject": "2girls, multiple girls",
     "scene_container": "ruined city, post-apocalyptic, rubble",
@@ -218,38 +214,42 @@ EXAMPLES = """# 完整示例
   ]
 }
 
-## 示例 3：原创角色（测试无实体时的思考截断）
-用户：「一个赛博朋克风格的机能服黑发男孩，站在雨夜的霓虹街头，仰角透视，全身」
+## 示例 3：高复杂度原创场景（测试长文本解构与属性路由）
+用户：「画一个穿着赛博朋克机甲的白发红瞳少女，悬浮在未来城市废墟上空，手里拿着发光的等离子巨剑，极端的仰角透视，背景是巨大的红色月亮，Wlop画风」
 {
-  "_thought_process": "1. Subject: 1boy black hair techwear, 2. Scene: cyberpunk neon street rainy night, 3. Canvas: 1024x1536 full body, 4. Hard tags: cyberpunk neon lights rain, 5. Soft phrases: cinematic lighting cyberpunk vibe, 6. NLtags: boy standing in rainy street from below, 7. Negative: bad anatomy bad feet, 8. Tag queries: None",
+  "step1_intent_decomposition": "1. Subject: 1girl, white hair, red eyes, cyberpunk mecha armor. 2. Action & Props: floating in air, holding glowing plasma greatsword. 3. Environment: futuristic ruined city, massive red moon. 4. Style/Light: Wlop style, extreme from below angle. 5. IP/Artist: wlop.",
+  "step2_attribute_routing": "hard_tags <- mecha armor, glowing sword, ruined city, red moon. nltags_block <- floating above ruins, holding sword, extreme angle. tag_queries <- wlop.",
   "brief": {
-    "subject": "1boy, black hair, techwear",
-    "scene_container": "cyberpunk street, neon lights, rainy night",
-    "action_relation": "standing straight",
+    "subject": "1girl, white hair, red eyes, mecha armor",
+    "scene_container": "futuristic ruined city, massive red moon, night sky",
+    "action_relation": "floating in the air, holding a plasma greatsword",
     "camera": "full body",
     "view_angle": "from below",
     "canvas": [1024, 1536],
-    "light_direction": "strong neon backlighting and colorful rim lights"
+    "light_direction": "red moonlight, glowing weapon light"
   },
   "three_layer": {
-    "hard_tags": "1boy, solo, black hair, techwear, cyberpunk, neon lights, rainy night, wet ground, city street",
-    "soft_phrases": "cool atmosphere, cinematic cyberpunk lighting",
-    "nltags_block": "A boy wearing techwear stands on a cyberpunk street during a rainy night. The camera views him from below. Strong neon lights illuminate him from behind."
+    "hard_tags": "1girl, solo, white hair, red eyes, cyberpunk, mecha armor, holding sword, glowing plasma greatsword, floating, futuristic ruined city, rubble, massive red moon, night",
+    "soft_phrases": "epic atmosphere, sci-fi action",
+    "nltags_block": "A girl in mecha armor is floating in the air above a futuristic ruined city. She is holding a glowing plasma greatsword. The camera looks up at her from an extreme angle. A massive red moon dominates the sky."
   },
   "args": {
-    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body",
+    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body, fused fingers, malformed hands, broken joints, bad perspective",
     "width": 1024,
     "height": 1536,
     "steps": 8,
-    "filename_prefix": "anima/cyber_boy"
+    "filename_prefix": "anima/cyber_mecha"
   },
-  "tag_queries": []
+  "tag_queries": [
+    {"id": "artist", "group": "artist", "keyword": "wlop"}
+  ]
 }
 
 ## 示例 4：特写近景（测试正方形画布与表情刻画）
 用户：「白发红瞳的猫娘特写，大大的笑容，阳光从侧面照过来，非常生动」
 {
-  "_thought_process": "1. Subject: 1girl white hair red eyes cat girl, 2. Scene: sunny bright, 3. Canvas: 1024x1024 close-up, 4. Hard tags: cat ears white hair red eyes, 5. Soft phrases: big smile lively, 6. NLtags: close up of cat girl smiling bright side sunlight, 7. Negative: distorted face",
+  "step1_intent_decomposition": "1. Subject: 1girl, cat girl, white hair, red eyes. 2. Action: smiling broadly, looking at viewer. 3. Environment: bright outdoors, sunny. 4. Style/Light: bright sunlight from the side. 5. IP/Artist: none.",
+  "step2_attribute_routing": "hard_tags <- cat ears, white hair, red eyes, bright outdoors. nltags_block <- close-up, smiling, side sunlight. tag_queries <- [].",
   "brief": {
     "subject": "1girl, cat girl, white hair, red eyes",
     "scene_container": "bright outdoors, sunny",
