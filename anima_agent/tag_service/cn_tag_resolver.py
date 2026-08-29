@@ -554,6 +554,78 @@ async def resolve_cn_tags(
 
 
 # =============================================================================
+# Stage 4b: 合并蒸馏+NER 直通检索 —— resolve_entities
+# =============================================================================
+# 端侧小模型优化:统一蒸馏 Prompt(INTENT_DISTILLER_SYSTEM)已把实体抽取并入
+# 意图蒸馏(一次 LLM 调用),这里直接用其 entities 数组做检索,不再单独调 LLM NER。
+#
+# entities 元素形如:
+#   {"id": "[ENT_1]", "type": "character|artist|series",
+#    "name": "原始中文名", "context_series": "作品名或 None", "aliases": [...]}
+# 与 resolve_cn_tags 同构:返回 (confirmed_tags, nltags, negative_elements)。
+# =============================================================================
+
+
+async def resolve_entities(
+    entities: Optional[list[dict]],
+    negative_elements: Optional[list[str]] = None,
+) -> tuple[list[str], list[str], list[str]]:
+    """直接用统一蒸馏输出的 entities 数组做检索(跳过 LLM NER,省一次调用)。
+
+    Args:
+        entities: 统一蒸馏输出的实体数组
+        negative_elements: 用户排除元素(统一蒸馏的 negative_elements 字段)
+
+    Returns:
+        (confirmed_tags, nltags, negative_elements)
+        - confirmed_tags: 可硬编码进 hard_tags 的英文 tag
+        - nltags: 查无此 Tag 降级到自然语言的原文
+        - negative_elements: 用户排除项(原样透传)
+
+    注意:type=artist 的实体不走中英对照检索(画师由标签库 artist 确认 /
+    随机池处理),直接跳过,避免产生垃圾 nltags。
+    """
+    from anima_agent.tag_service._ner import CharacterEntity, NERResult
+    from anima_agent.tag_service._retrieval import get_engine
+
+    chars: list[CharacterEntity] = []
+    for ent in entities or []:
+        if not isinstance(ent, dict):
+            continue
+        ent_type = str(ent.get("type") or "").lower()
+        name = str(ent.get("name") or "").strip()
+        if not name:
+            continue
+        if ent_type == "artist":
+            # 画师不进中英对照检索(由 artist 确认/随机池处理)
+            continue
+        context_series = ent.get("context_series") or None
+        if ent_type == "series":
+            # 独立作品实体:作品名本身就是检索目标,不再套 context_series
+            context_series = None
+        aliases = ent.get("aliases") or []
+        if not isinstance(aliases, list):
+            aliases = []
+        chars.append(CharacterEntity(
+            name=name,
+            context_series=str(context_series).strip() if context_series else None,
+            aliases=[str(a).strip() for a in aliases if a],
+            certainty="high",
+        ))
+
+    neg = [str(n).strip() for n in (negative_elements or []) if str(n).strip()]
+    ner = NERResult(characters=chars, negative_elements=neg, success=True)
+    if not chars and not neg:
+        return [], [], []
+
+    retrieval = get_engine().resolve(ner)
+
+    confirmed = [tag.en_tag for tag in retrieval.resolved if not tag.fallback_nl]
+    nltags = [tag.original_name for tag in retrieval.resolved if tag.fallback_nl]
+    return confirmed, nltags, retrieval.negative_elements
+
+
+# =============================================================================
 # 后向兼容：保留旧版 build_cn_translation_hint（滑动窗口版）
 # 调用方无需修改，但新代码应使用 build_cn_translation_hint_v2
 # =============================================================================

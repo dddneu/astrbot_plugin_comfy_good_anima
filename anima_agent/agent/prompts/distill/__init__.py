@@ -19,12 +19,31 @@ from anima_agent.agent.prompts.distill.edit import (
 )
 
 
-def restore_entity_placeholders(structured_intent: str, entity_map: dict) -> str:
-    """将 structured_intent 中的 [ENT_1] / ENT_1 占位符替换回原始实体文本。"""
+def restore_entity_placeholders(structured_intent: str, entities) -> str:
+    """将 structured_intent 中的 [ENT_1] / ENT_1 占位符替换回原始实体文本。
+
+    entities 支持两种形态:
+    - 新: list of dict [{id, name, type, context_series, ...}, ...]
+      (统一蒸馏+NER 合并版的输出, id 形如 "[ENT_1]" 或 "ENT_1")
+    - 旧: dict {ENT_1: 原始文本, ...}(entity_map, 向后兼容)
+    """
     final = structured_intent or ""
-    for key, original_text in (entity_map or {}).items():
-        final = final.replace(f"[{key}]", str(original_text))
-        final = final.replace(key, str(original_text))
+
+    if isinstance(entities, dict):
+        mapping = {str(k): str(v) for k, v in entities.items()}
+    else:
+        mapping = {}
+        for ent in entities or []:
+            if not isinstance(ent, dict):
+                continue
+            eid = str(ent.get("id") or "").strip().strip("[]")
+            name = ent.get("name")
+            if eid:
+                mapping[eid] = str(name or eid)
+
+    for key, original_text in mapping.items():
+        final = final.replace(f"[{key}]", original_text)
+        final = final.replace(key, original_text)
     return final.strip()
 
 

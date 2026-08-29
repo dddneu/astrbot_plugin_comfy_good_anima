@@ -140,6 +140,10 @@ Assemble in order: hard_tags → soft_phrases → nltags_block
 - Continuous natural language description: space, gaze, contact, light, depth
 - DO NOT write tag lists or literary metaphors
 - MUST start with: "Place the character..." or "Use..."
+- ABSOLUTE RED LINES FOR NLTAGS_BLOCK:
+  1. ONLY use English. NO Chinese characters are allowed under any circumstances.
+  2. ONLY describe physical, visible elements (who, doing what, where, what light).
+  3. NEVER write meta-comments, summaries, or abstract guidelines (e.g., "Ensure visual characteristics are natural", "The scene is intensely dramatic").
 """
 
 

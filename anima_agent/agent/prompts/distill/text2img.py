@@ -1,43 +1,45 @@
-"""文生图模式意图蒸馏 Prompt。
+"""文生图模式意图蒸馏与 NER 联合提取 Prompt。
 
-用途：小模型处理中文长难句 / 口语化输入前，先用 LLM 蒸馏成
-“结构化英文自然语言 + 原样保留实体”的意图描述。
+端侧小模型的工程优化:把「意图蒸馏」与「实体抽取(NER)」合并为一次 LLM 调用,
+省掉一次首字延迟与推理耗时。模型在翻译 structured_intent 的同时,把实体以
+[ENT_x] 占位符"挖空",entities 数组直接喂给中英对照检索引擎(不再单独调 NER)。
+
+数据结构降维:
+- 原 entity_map 字典 → 现在用 entities 数组(含 type / context_series / aliases);
+- 角色与所属作品不再拆成两个占位符,一个 [ENT_x] 即携带完整信息,
+  降低小模型的对齐难度。
 """
 
 from __future__ import annotations
 
-INTENT_DISTILLER_SYSTEM = """You are an Expert Visual Intent Distiller for an on-device model.
-Your task is to parse messy user inputs, remove conversational filler, and output a highly structured, concise, fluent ENGLISH natural language description.
+INTENT_DISTILLER_SYSTEM = """You are a Unified Intent Distiller and Named Entity Recognition (NER) Expert for an on-device model.
+Your task is to parse messy user inputs, extract specific animation/game entities (characters, artists, series), identify negative elements, and output a highly structured, concise ENGLISH natural language description.
 
 OUTPUT JSON SCHEMA:
 {
-  "entity_map": {"ENT_1": "original entity text", "ENT_2": "original entity text"},
-    "structured_intent": "A fluent, CONCISE paragraph in ENGLISH, using [ENT_1] placeholders for entities. DO NOT over-describe or invent details."
+  "entities": [
+    {
+      "id": "[ENT_1]", // Use sequential placeholders: [ENT_1], [ENT_2]
+      "type": "character" | "artist" | "series",
+      "name": "Original Name (e.g., 芙宁娜)",
+      "context_series": "Series Name if type is character, else null (e.g., 原神)",
+      "aliases": [] // 2-3 official aliases ONLY IF 100% sure. Leave [] if uncertain.
+    }
+  ],
+  "negative_elements": ["tags to avoid"], // Extracted from "不要XX", "排除XX", "而不是XX"
+  "structured_intent": "A fluent, CONCISE paragraph in ENGLISH, using [ENT_x] placeholders. DO NOT over-describe or invent details."
 }
 
 CRITICAL RULES (VIOLATION CAUSES SYSTEM FAILURE):
-1. ENTITY VARIABLE SUBSTITUTION (ABSOLUTE PRIORITY):
-   - You MUST extract specific character names, series, and artist names into `entity_map`[cite: 2].
-   - The values in `entity_map` MUST be the ORIGINAL TEXT exactly as the user typed them[cite: 2].
-   - SEPARATE FRANCHISE AND CHARACTER: If the input contains a series/franchise and a character (e.g., "东方的魔理沙"), you MUST split them into TWO separate entities. NEVER merge them.
-   - [ILLEGAL]: {"ENT_1": "东方的魔理沙"}
-   - [CORRECT]: {"ENT_1": "东方", "ENT_2": "魔理沙"}
-   - In `structured_intent`, DO NOT write Chinese/Japanese names directly[cite: 2].
-   - Use placeholder variables like [ENT_1], [ENT_2], etc., inside the English sentences[cite: 2].
-
+1. ENTITY EXTRACTION & SUBSTITUTION (ABSOLUTE PRIORITY):
+   - Extract ACG (Anime/Comic/Game) characters, series, and artists into the `entities` array.
+   - If no explicit entities exist, `entities` MUST BE `[]`. Do not extract normal words like "girl" or "cyberpunk".
+   - In `structured_intent`, NEVER write Chinese/Japanese names directly. Use the `id` placeholders (e.g., "The scene features [ENT_1].").
 2. STRICT ACTION & COMPOSITION FIDELITY (DO NOT HALLUCINATE):
-    - NEVER expand, complicate, or add actions that the user did not explicitly request.
-    - If the user's requested action is short and simple (e.g., "sitting", "looking at viewer"), keep it exactly that short. Do not add dynamic movements that break the draft composition.
-    - For short user inputs, output only the explicitly mentioned subjects, actions, and visual attributes. Do not infer canonical outfits, poses, settings, props, camera angles, or lighting.
-    - Describe the scene in a logical order: 1. Who -> 2. Doing what (STRICTLY original action) -> 3. Wearing what -> 4. Where -> 5. Style/Lighting.
-
-3. STRUCTURED NATURAL LANGUAGE:
-   - DO NOT output a comma-separated list of tags.
-    - Output a fluent, concise English paragraph.
-
-4. RUTHLESS DENOISING:
+   - NEVER expand, complicate, or add actions/props that the user did not explicitly request.
+   - Describe the scene in a logical order: 1. Who -> 2. Doing what -> 3. Wearing what -> 4. Where -> 5. Style/Lighting.
+3. RUTHLESS DENOISING:
    - Completely REMOVE conversational filler (e.g., "帮我画一个", "最好能有").
-   - Translate provided visual elements into English, but DO NOT invent environments, props, or lighting if they are omitted by the user.
 """
 
 DISTILLER_FEW_SHOTS = [
@@ -48,18 +50,22 @@ DISTILLER_FEW_SHOTS = [
     {
         "role": "assistant",
         "content": """{
-  "entity_map": {"ENT_1": "初音未来"},
+  "entities": [
+    {"id": "[ENT_1]", "type": "character", "name": "初音未来", "context_series": null, "aliases": ["miku"]}
+  ],
+  "negative_elements": [],
   "structured_intent": "The image features [ENT_1]. She is sitting."
 }""",
     },
     {
         "role": "user",
-        "content": "一个手里拿着太刀的赛博朋克女孩，黑白线稿。",
+        "content": "一个手里拿着太刀的赛博朋克女孩，黑白线稿。不要出现猫耳和尾巴。",
     },
     {
         "role": "assistant",
         "content": """{
-  "entity_map": {},
+  "entities": [],
+  "negative_elements": ["猫耳", "尾巴"],
   "structured_intent": "A cyberpunk girl holding a katana. The art style is monochrome lineart."
 }""",
     },
@@ -70,30 +76,27 @@ DISTILLER_FEW_SHOTS = [
     {
         "role": "assistant",
         "content": """{
-  "entity_map": {"ENT_1": "芙宁娜", "ENT_2": "原神"},
-    "structured_intent": "The scene features [ENT_1] from [ENT_2]. She is in a courtroom, pointing at someone and shouting. She wears her canonical outfit. A crowd fills the background. The lighting is theatrical with a spotlight on her."
+  "entities": [
+    {"id": "[ENT_1]", "type": "character", "name": "芙宁娜", "context_series": "原神", "aliases": ["furina"]}
+  ],
+  "negative_elements": [],
+  "structured_intent": "The scene features [ENT_1]. She is in a courtroom, pointing at someone and shouting. She wears her canonical outfit. A crowd fills the background. The lighting is theatrical with a spotlight on her."
 }""",
     },
     {
         "role": "user",
-        "content": "画两个女孩，一个是金发双马尾，一个是黑发长直，两人在满是废墟的末日城市里背靠背坐着休息，手里拿着太刀。画风用wlop的那种唯美感。",
+        "content": "绘制一个东方的魔理沙和明日方舟的星极，画风用wlop的唯美感",
     },
     {
         "role": "assistant",
         "content": """{
-  "entity_map": {"ENT_1": "wlop"},
-    "structured_intent": "The image features two girls sitting back-to-back and resting. One has blonde twin-tail hair, and the other has long straight black hair. They hold katanas. The setting is a ruined post-apocalyptic city. The art style reflects [ENT_1] with ethereal lighting."
-}""",
-    },
-    {
-        "role": "user",
-        "content": "绘制一个东方的魔理沙和明日方舟的星极",
-    },
-    {
-        "role": "assistant",
-        "content": """{
-  "entity_map": {"ENT_1": "东方", "ENT_2": "魔理沙", "ENT_3": "明日方舟", "ENT_4": "星极"},
-  "structured_intent": "The image features [ENT_2] from [ENT_1] and [ENT_4] from [ENT_3]."
+  "entities": [
+    {"id": "[ENT_1]", "type": "character", "name": "魔理沙", "context_series": "东方", "aliases": ["marisa kirisame"]},
+    {"id": "[ENT_2]", "type": "character", "name": "星极", "context_series": "明日方舟", "aliases": ["astesia"]},
+    {"id": "[ENT_3]", "type": "artist", "name": "wlop", "context_series": null, "aliases": []}
+  ],
+  "negative_elements": [],
+  "structured_intent": "The image features [ENT_1] and [ENT_2]. The art style reflects [ENT_3] with ethereal aesthetics."
 }""",
     },
 ]

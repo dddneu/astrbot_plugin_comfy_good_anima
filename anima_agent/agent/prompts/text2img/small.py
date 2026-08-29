@@ -23,11 +23,11 @@ from anima_agent.agent.prompts._shared import (
 CREATIVE_RULES = """# 创作规则
 
 **在 `_thought_process` 字段中进行思考**（极其简短，单行，禁止换行和双引号）：
-按照格式 "1. Subject: ..., 2. Scene: ..., 3. Canvas: ..., 4. Hard tags: ..., 5. Soft phrases: ..., 6. NLtags block: ..., 7. Negative tags: ..."
+按照格式 "1. Subject: ..., 2. Scene: ..., 3. Canvas: ..., 4. Hard tags: ..., 5. Soft phrases: ..., 6. NLtags: ..., 7. Negative: ..., 8. Tag queries: (写下识别到的IP/画师，无则写None)"
 
-**第一步：理解用户描述**
-- 提取：主体（人物/物体）、人数、动作、场景、光线、情感氛围。
-- 用户描述可能很自由，不要套用预设模板，直接根据文字理解。
+**第一步：理解用户描述并提取核心实体**
+- 提取：主体、动作、场景、光线。  
+- 强制识别：用户是否提到了特定的「角色名(character)」、「作品名(series)」或「画师名(artist)」？
 
 **第二步：确定构图信息（brief）**
 - subject：写清“人数 + 角色名或外观特征”，例：“1girl, silver hair, blue eyes”。
@@ -40,8 +40,6 @@ CREATIVE_RULES = """# 创作规则
   - 单人全身/立绘：1024x1536
   - 多人互动/横版场景：1536x1024
   - 竖版海报：864x1536
-  若用户描述特殊，可自行微调尺寸，保持宽高比接近上述常用值。
-- light_direction：描述光源方向，例如“soft sunlight from left”，“backlight with rim light”。
 
 **第三步：拆分三层标签（three_layer）**
 - hard_tags：只写离散的单词或词组，逗号分隔，禁止完整句子。内容应包括：质量词（masterpiece, best quality）、人物外观、服装、场景基本元素。
@@ -52,10 +50,8 @@ CREATIVE_RULES = """# 创作规则
 - 必须包含：`worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body`
 - 若用户描述包含手部动作或多人，追加：`, fused fingers, malformed hands, broken joints, merged bodies, cloned face, extra limbs`
 
-**第五步：检查输出 JSON**
-- canvas 字段必须是整数数组，如 [1024, 1536]。
-- hard_tags 中没有完整句子。
-- nltags_block 是连续描述，不是标签。
+**第五步：组装 Tag Queries**
+- 将第一步提取到的实体严格按照 `{"id": "类别", "group": "类别", "keyword": "具体英文名"}` 的格式填入。若没有明确的动漫/游戏/画师实体，必须保留为空数组 `[]`。
 """
 
 UNIVERSAL_RULES = """# 必须遵守的核心规则
@@ -124,9 +120,9 @@ FAILURE_PATTERNS = """# 常见问题处理提示
 JSON_SKELETON = """# 输出格式（只输出 JSON，不要输出其他文字）
 
 {
-  "_thought_process": "1. Subject: ..., 2. Scene: ..., 3. Canvas: ..., 4. Hard tags: ..., 5. Soft phrases: ..., 6. NLtags: ..., 7. Negative: ...",
+  "_thought_process": "1. Subject: ..., 2. Scene: ..., 3. Canvas: ..., 4. Hard tags: ..., 5. Soft phrases: ..., 6. NLtags: ..., 7. Negative: ..., 8. Tag queries: kanade tachibana(character), angel beats(series)",
   "brief": {
-    "subject": "1girl, silver hair",
+    "subject": "1girl, kanade tachibana",
     "scene_container": "classroom, window, sunlight",
     "action_relation": "sitting, holding a book",
     "camera": "upper body",
@@ -135,9 +131,9 @@ JSON_SKELETON = """# 输出格式（只输出 JSON，不要输出其他文字）
     "light_direction": "soft window light from left"
   },
   "three_layer": {
-    "hard_tags": "1girl, solo, silver hair, blue eyes, school uniform",
+    "hard_tags": "1girl, solo, kanade tachibana, silver hair, blue eyes",
     "soft_phrases": "gentle smile, quiet atmosphere",
-    "nltags_block": "Place the girl by the window. Use soft light from the left. Keep background slightly blurred."
+    "nltags_block": "Place the girl by the window. Use soft light from the left."
   },
   "args": {
     "prompt_12": "worst quality, low quality, bad anatomy, bad hands, extra fingers, distorted face",
@@ -146,16 +142,19 @@ JSON_SKELETON = """# 输出格式（只输出 JSON，不要输出其他文字）
     "steps": 8,
     "filename_prefix": "anima/example"
   },
-  "tag_queries": []
+  "tag_queries": [
+    {"id": "character", "group": "character", "keyword": "kanade tachibana"},
+    {"id": "series", "group": "series", "keyword": "angel beats"}
+  ]
 }
 """
 
 EXAMPLES = """# 完整示例
 
-## 普通模式示例
+## 示例 1：单人已知 IP（测试角色识别与普通半身构图）
 用户：「生成天使心跳的立华奏，三无感，教室窗边柔光」
 {
-  "_thought_process": "1. Subject: 1girl, kanade tachibana, 2. Scene: classroom window soft sunlight, 3. Canvas: 1024x1536 upper body, 4. Hard tags: silver hair yellow eyes short hair, 5. Soft phrases: quiet expressionless, 6. NLtags: window light left side, 7. Negative: bad anatomy bad hands extra fingers",
+  "_thought_process": "1. Subject: 1girl kanade tachibana, 2. Scene: classroom window soft sunlight, 3. Canvas: 1024x1536 upper body, 4. Hard tags: silver hair yellow eyes short hair, 5. Soft phrases: quiet expressionless, 6. NLtags: window light left side, 7. Negative: bad anatomy bad hands extra fingers, 8. Tag queries: kanade tachibana, angel beats",
   "brief": {
     "subject": "1girl, kanade tachibana",
     "scene_container": "classroom, window, soft sunlight",
@@ -171,7 +170,7 @@ EXAMPLES = """# 完整示例
     "nltags_block": "Place Kanade by the classroom window. Use soft window light from the left. Keep her face expressionless and background slightly blurred."
   },
   "args": {
-    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, extra fingers, missing fingers, distorted face",
+    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face",
     "width": 1024,
     "height": 1536,
     "steps": 8,
@@ -183,30 +182,88 @@ EXAMPLES = """# 完整示例
   ]
 }
 
-## 参考图模式示例
-用户：「基于参考图，生成角色在海边看日落」
+## 示例 2：多人动作与画风（测试画师识别）
+用户：「画两个女孩背靠背坐在废墟里，手里拿着太刀，末日城市，Wlop画风」
 {
-  "_thought_process": "1. Subject: 1girl silver hair blue eyes, 2. Scene: beach sunset golden hour, 3. Canvas: 1536x1024 full body, 4. Hard tags: silver hair blue eyes long hair flowy dress, 5. Soft phrases: warm golden peaceful, 6. NLtags: seated sand rim light sunset, 7. Negative: bad anatomy bad hands extra fingers",
+  "_thought_process": "1. Subject: 2girls holding katana, 2. Scene: ruined post-apocalyptic city, 3. Canvas: 1536x1024 full body, 4. Hard tags: back-to-back weapons ruins, 5. Soft phrases: tense atmosphere dramatic, 6. NLtags: two girls sitting back to back holding swords, 7. Negative: fused fingers merged bodies, 8. Tag queries: wlop(artist)",
   "brief": {
-    "subject": "1girl, silver hair, blue eyes",
-    "scene_container": "beach, sunset, golden hour",
-    "action_relation": "seated on sand, relaxed, looking at sunset",
-    "camera": "upper body",
-    "view_angle": "slight low angle",
+    "subject": "2girls, multiple girls",
+    "scene_container": "ruined city, post-apocalyptic, rubble",
+    "action_relation": "sitting back-to-back, holding katanas",
+    "camera": "full body",
+    "view_angle": "eye-level",
     "canvas": [1536, 1024],
-    "light_direction": "warm golden hour backlight with rim light"
+    "light_direction": "dramatic lighting, cinematic atmosphere"
   },
   "three_layer": {
-    "hard_tags": "1girl, solo, silver hair, blue eyes, long hair, flowy dress, beach, sunset, golden hour",
-    "soft_phrases": "warm golden tones, peaceful atmosphere",
-    "nltags_block": "Place the subject seated on the sand, slightly right of center. Use warm backlight from the sunset with rim light on her hair. Keep her face readable and background softly blurred."
+    "hard_tags": "2girls, multiple girls, holding katana, back-to-back, ruined city, post-apocalyptic, weapons, rubble",
+    "soft_phrases": "tense atmosphere, dramatic and epic feel",
+    "nltags_block": "Two girls are sitting back-to-back in a ruined city environment. They are actively holding katanas. The lighting is cinematic with dust floating in the air."
   },
   "args": {
-    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, extra fingers, distorted face",
+    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, fused fingers, malformed hands, broken joints, merged bodies, cloned face, extra limbs",
     "width": 1536,
     "height": 1024,
     "steps": 8,
-    "filename_prefix": "anima/beach_sunset"
+    "filename_prefix": "anima/ruins_battle"
+  },
+  "tag_queries": [
+    {"id": "artist", "group": "artist", "keyword": "wlop"}
+  ]
+}
+
+## 示例 3：原创角色（测试无实体时的思考截断）
+用户：「一个赛博朋克风格的机能服黑发男孩，站在雨夜的霓虹街头，仰角透视，全身」
+{
+  "_thought_process": "1. Subject: 1boy black hair techwear, 2. Scene: cyberpunk neon street rainy night, 3. Canvas: 1024x1536 full body, 4. Hard tags: cyberpunk neon lights rain, 5. Soft phrases: cinematic lighting cyberpunk vibe, 6. NLtags: boy standing in rainy street from below, 7. Negative: bad anatomy bad feet, 8. Tag queries: None",
+  "brief": {
+    "subject": "1boy, black hair, techwear",
+    "scene_container": "cyberpunk street, neon lights, rainy night",
+    "action_relation": "standing straight",
+    "camera": "full body",
+    "view_angle": "from below",
+    "canvas": [1024, 1536],
+    "light_direction": "strong neon backlighting and colorful rim lights"
+  },
+  "three_layer": {
+    "hard_tags": "1boy, solo, black hair, techwear, cyberpunk, neon lights, rainy night, wet ground, city street",
+    "soft_phrases": "cool atmosphere, cinematic cyberpunk lighting",
+    "nltags_block": "A boy wearing techwear stands on a cyberpunk street during a rainy night. The camera views him from below. Strong neon lights illuminate him from behind."
+  },
+  "args": {
+    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body",
+    "width": 1024,
+    "height": 1536,
+    "steps": 8,
+    "filename_prefix": "anima/cyber_boy"
+  },
+  "tag_queries": []
+}
+
+## 示例 4：特写近景（测试正方形画布与表情刻画）
+用户：「白发红瞳的猫娘特写，大大的笑容，阳光从侧面照过来，非常生动」
+{
+  "_thought_process": "1. Subject: 1girl white hair red eyes cat girl, 2. Scene: sunny bright, 3. Canvas: 1024x1024 close-up, 4. Hard tags: cat ears white hair red eyes, 5. Soft phrases: big smile lively, 6. NLtags: close up of cat girl smiling bright side sunlight, 7. Negative: distorted face",
+  "brief": {
+    "subject": "1girl, cat girl, white hair, red eyes",
+    "scene_container": "bright outdoors, sunny",
+    "action_relation": "smiling broadly, looking at viewer",
+    "camera": "close-up",
+    "view_angle": "eye-level",
+    "canvas": [1024, 1024],
+    "light_direction": "bright sunlight from the side"
+  },
+  "three_layer": {
+    "hard_tags": "1girl, solo, cat ears, cat girl, white hair, red eyes, bright outdoors",
+    "soft_phrases": "big smile, lively and energetic, happy atmosphere",
+    "nltags_block": "A close-up shot of a cat girl with a big smile. Bright sunlight hits her face from the side. The overall mood is very lively and energetic."
+  },
+  "args": {
+    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body",
+    "width": 1024,
+    "height": 1024,
+    "steps": 8,
+    "filename_prefix": "anima/catgirl_smile"
   },
   "tag_queries": []
 }

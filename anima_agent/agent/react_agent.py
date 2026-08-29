@@ -226,7 +226,10 @@ class SimpleAgent:
         if is_edit_mode:
             # Edit 模式:从 ref_tags 提取 [wd14] 部分作为基础输入
             wd14_tags = self._extract_wd14_tags(ref_tags or "")
-            # Edit 模式小模型预蒸馏：Tag 堆砌 / 短句 / 口语化输入 → 明确修改指令
+            # Edit 模式小模型统一蒸馏 + NER:一次 LLM 调用产出修改指令与 entities,
+            # 直接用 entities 检索(不再单独调 LLM NER)。
+            merged_entities: Optional[list] = None
+            merged_negative: Optional[list] = None
             if effective_model_size == "small":
                 try:
                     distilled = await maybe_await(
@@ -244,11 +247,18 @@ class SimpleAgent:
                                 distilled = str(distilled_data["structured_intent"]).strip()
                             elif distilled_data.get("refined_intent"):
                                 distilled = str(distilled_data["refined_intent"]).strip()
-                            # 实体占位符还原：ENT_x -> 原始中文/日文/英文实体
-                            distilled = restore_entity_placeholders(
-                                distilled,
-                                distilled_data.get("entity_map") or {},
-                            )
+                            entities = distilled_data.get("entities")
+                            if isinstance(entities, list):
+                                # 新格式:entities 数组 → 合并 NER 直通检索
+                                distilled = restore_entity_placeholders(distilled, entities)
+                                merged_entities = entities
+                                merged_negative = distilled_data.get("negative_elements") or []
+                            else:
+                                # 旧格式兼容:entity_map 字典
+                                distilled = restore_entity_placeholders(
+                                    distilled,
+                                    distilled_data.get("entity_map") or {},
+                                )
                         if distilled:
                             logger.info(
                                 "Edit 小模型意图蒸馏: %d字符 -> %d字符",
@@ -258,12 +268,21 @@ class SimpleAgent:
                             user_prompt = distilled
                 except Exception as e:  # noqa: BLE001
                     logger.warning("Edit 小模型意图蒸馏失败，使用原文: %s", e)
-            # Edit 模式同样执行 NER + 中文角色/作品 Tag 替换，再进入 edit draftsman
-            from anima_agent.tag_service.cn_tag_resolver import resolve_cn_tags
-
-            confirmed_tags, _nltags, _negative = await resolve_cn_tags(
-                user_prompt, self.llm_complete
+            # Edit 模式实体解析:合并蒸馏给出 entities → 直接检索;
+            # 蒸馏失败/无 entities/大模型 → 走独立 resolve_cn_tags(LLM NER)
+            from anima_agent.tag_service.cn_tag_resolver import (
+                resolve_cn_tags,
+                resolve_entities,
             )
+
+            if effective_model_size == "small" and merged_entities is not None:
+                confirmed_tags, _nltags, _neg = await resolve_entities(
+                    merged_entities, merged_negative
+                )
+            else:
+                confirmed_tags, _nltags, _neg = await resolve_cn_tags(
+                    user_prompt, self.llm_complete
+                )
             if confirmed_tags:
                 user_prompt = (
                     f"{user_prompt}\n\n[已确认角色/作品英文 Tag] "
@@ -273,7 +292,10 @@ class SimpleAgent:
             return await self._draft_edit_mode(wd14_tags, user_prompt)
 
         # Normal/Random 模式
-        # 小模型预蒸馏：中文语义密度高，不按固定长度判断；走小模型就压缩成短英文关键信息
+        # 小模型统一蒸馏 + NER(合并):一次 LLM 调用同时产出
+        # structured_intent 与 entities 数组,直接用 entities 检索,不再单独调 NER。
+        merged_entities: Optional[list] = None
+        merged_negative: Optional[list] = None
         if effective_model_size == "small":
             try:
                 distilled = await maybe_await(
@@ -292,11 +314,18 @@ class SimpleAgent:
                             distilled = str(distilled_data["structured_intent"]).strip()
                         elif distilled_data.get("refined_intent"):
                             distilled = str(distilled_data["refined_intent"]).strip()
-                        # 实体占位符还原：ENT_x -> 原始中文/日文/英文实体
-                        distilled = restore_entity_placeholders(
-                            distilled,
-                            distilled_data.get("entity_map") or {},
-                        )
+                        entities = distilled_data.get("entities")
+                        if isinstance(entities, list):
+                            # 新格式:entities 数组 → 合并 NER 直通检索
+                            distilled = restore_entity_placeholders(distilled, entities)
+                            merged_entities = entities
+                            merged_negative = distilled_data.get("negative_elements") or []
+                        else:
+                            # 旧格式兼容:entity_map 字典(无 entities → 走独立 NER)
+                            distilled = restore_entity_placeholders(
+                                distilled,
+                                distilled_data.get("entity_map") or {},
+                            )
                     logger.info(
                         "小模型长输入蒸馏: %d字符 -> %d字符",
                         len(user_prompt),
@@ -306,12 +335,21 @@ class SimpleAgent:
             except Exception as e:  # noqa: BLE001
                 logger.warning("小模型长输入蒸馏失败，使用原文: %s", e)
 
-        # Stage 1+2+3: NER 抽取 → 精确检索 → 拼音容错（前置翻译节点）
-        from anima_agent.tag_service.cn_tag_resolver import resolve_cn_tags
-
-        confirmed_en_tags, nltags, negative_elements = await resolve_cn_tags(
-            user_prompt, self.llm_complete
+        # 实体解析:小模型合并蒸馏直接给出 entities → 检索(省一次 LLM NER);
+        # 蒸馏失败/无 entities/大模型 → 走独立 resolve_cn_tags(LLM NER)
+        from anima_agent.tag_service.cn_tag_resolver import (
+            resolve_cn_tags,
+            resolve_entities,
         )
+
+        if merged_entities is not None:
+            confirmed_en_tags, nltags, negative_from_ner = await resolve_entities(
+                merged_entities, merged_negative
+            )
+        else:
+            confirmed_en_tags, nltags, negative_from_ner = await resolve_cn_tags(
+                user_prompt, self.llm_complete
+            )
 
         # 构建用户消息
         user_msg = self._build_user_message(
@@ -322,6 +360,7 @@ class SimpleAgent:
             "",
             confirmed_en_tags,
             nltags,
+            negative_from_ner,
         )
 
         # 一次性出稿，最多重试 2 次
@@ -373,6 +412,7 @@ class SimpleAgent:
         cn_hint: str = "",
         confirmed_en_tags: Optional[list[str]] = None,
         nltags: Optional[list[str]] = None,
+        negative_elements: Optional[list[str]] = None,
     ) -> str:
         """【重构版】只组装客观数据，绝不包含规则和 JSON 骨架。"""
         parts = []
@@ -403,6 +443,11 @@ class SimpleAgent:
         if confirmed_artists:
             artist_str = ", ".join(confirmed_artists)
             parts.append(f"\n【已确认画师名单】(必须作为 @画师 处理):\n{artist_str}")
+
+        # 5. 用户排除元素(NER/蒸馏提取的"不要XX"),写入负面提示词
+        if negative_elements:
+            neg_str = "、".join(negative_elements)
+            parts.append(f"\n【用户排除的元素】(不要出现在画面中，写进负面提示词):\n{neg_str}")
 
         # 删除了所有关于 LoRA 调参、换衣服规则、JSON 骨架的冗余文本！
         return "\n".join(parts)

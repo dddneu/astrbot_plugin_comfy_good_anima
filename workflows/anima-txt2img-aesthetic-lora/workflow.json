@@ -124,7 +124,7 @@
         0
       ],
       "seed": 1079443893523910,
-      "steps": 6,
+      "steps": 4,
       "cfg": 4.5,
       "sampler_name": "euler",
       "scheduler": "simple",
@@ -193,8 +193,8 @@
         "44",
         0
       ],
-      "lora_name": "anima-highres-aesthetic-boost.safetensors",
-      "strength_model": 1.0
+      "lora_name": "illustriousXLv01_stabilizer_v1.198.safetensors",
+      "strength_model": 0.5
     }
   },
   "63": {
@@ -205,7 +205,7 @@
         0
       ],
       "lora_name": "anima-base-1-masterpiece-v51.safetensors",
-      "strength_model": 1.0
+      "strength_model": 0.5
     }
   },
   "64": {
@@ -215,8 +215,8 @@
         "63",
         0
       ],
-      "lora_name": "illustriousXLv01_stabilizer_v1.198.safetensors",
-      "strength_model": 0.25
+      "lora_name": "anima-highres-aesthetic-boost.safetensors",
+      "strength_model": 0.5
     }
   },
   "65": {
@@ -227,7 +227,7 @@
         0
       ],
       "lora_name": "Smooth_Booster_v5.safetensors",
-      "strength_model": 0.25
+      "strength_model": 0.1
     }
   }
 }
