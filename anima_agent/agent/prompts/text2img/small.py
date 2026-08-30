@@ -137,7 +137,7 @@ JSON_SKELETON = """# 输出格式（只输出 JSON，不要输出其他文字）
     "prompt_12": "worst quality, low quality, bad anatomy, bad hands, extra fingers, distorted face",
     "width": 1024,
     "height": 1536,
-    "steps": 8,
+    "steps": 6,
     "filename_prefix": "anima/example"
   },
   "tag_queries": [
@@ -174,7 +174,7 @@ EXAMPLES = """# 完整示例
     "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face",
     "width": 1024,
     "height": 1536,
-    "steps": 8,
+    "steps": 6,
     "filename_prefix": "anima/kanade"
   },
   "tag_queries": [
@@ -206,7 +206,7 @@ EXAMPLES = """# 完整示例
     "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, fused fingers, malformed hands, broken joints, merged bodies, cloned face, extra limbs",
     "width": 1536,
     "height": 1024,
-    "steps": 8,
+    "steps": 6,
     "filename_prefix": "anima/ruins_battle"
   },
   "tag_queries": [
@@ -237,7 +237,7 @@ EXAMPLES = """# 完整示例
     "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body, dislocated limbs, deformed body, fused fingers, malformed hands, broken joints, bad perspective",
     "width": 1024,
     "height": 1536,
-    "steps": 8,
+    "steps": 6,
     "filename_prefix": "anima/cyber_mecha"
   },
   "tag_queries": [
@@ -268,7 +268,7 @@ EXAMPLES = """# 完整示例
     "prompt_12": "worst quality, low quality, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, body misalignment, twisted body",
     "width": 1024,
     "height": 1024,
-    "steps": 8,
+    "steps": 6,
     "filename_prefix": "anima/catgirl_smile"
   },
   "tag_queries": []

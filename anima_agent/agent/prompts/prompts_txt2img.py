@@ -63,11 +63,11 @@ def auto_inject_tune_params(
 
     # 1. turbo 工作流保护（turbo 对 steps/cfg 敏感）
     if "turbo" in (workflow_id or ""):
-        args.setdefault("steps", 8)
+        args.setdefault("steps", 6)
         args.setdefault("fls_cfg", 1.0)  # turbo 保持低 cfg
     else:
-        args.setdefault("steps", 8)
-        args.setdefault("fls_cfg", 6.5)
+        args.setdefault("steps", 20)
+        args.setdefault("fls_cfg", 4.5)
 
     # 2. 细节/纹理问题 → 提高 fls_fovea_strength
     detail_keywords = ["细节", "纹理", "质感", "皮肤", "头发丝", "刺绣", "复杂"]
@@ -87,8 +87,8 @@ def auto_inject_tune_params(
             args.setdefault("ip_adapter_strength", 0.7)
             args.setdefault("ip_adapter_end_at", 0.4)
         # 默认参考图参数
-        args.setdefault("instantref_model_strength", 1.2)
-        args.setdefault("instantref_clip_strength", 1.35)
+        args.setdefault("instantref_model_strength", 0.4)
+        args.setdefault("instantref_clip_strength", 0.4)
 
     # 5. 负面排斥词（基于 LLM 输出的内容追加）
     negative_repel = args.get("negative_repel", [])

@@ -237,7 +237,7 @@ JSON_SKELETON = """# 输出格式
   "args": {
     "prompt_12": "负向prompt",
     "artist_chain": "仅画师融合模式时填：2-4个画师，不带@，支持权重如 wlop, (sakimichan:1.2)",
-    "width": 1152, "height": 1536, "steps": 8,
+    "width": 1152, "height": 1536, "steps": 6,
     "filename_prefix": "anima/前缀",
     "ref_tag_exclude": "仅参考图模式(可选)：要焊进角色的身份 tag(1girl/solo/looking at viewer/发色/瞳色)；绝不能放衣服/动作/背景(打标悖论)",
     "ref_tag_prepend": "仅参考图模式(可选)：画风词(技法 tag/画师名)",
@@ -245,7 +245,7 @@ JSON_SKELETON = """# 输出格式
     "ref_tag_general_threshold": 0.35,
     "ref_tag_character_threshold": 0.85,
     "ref_train_network_dim": 0,
-    "ref_train_steps": 0
+    "ref_train_steps": 6
   },
   "tag_queries": [
     {"id": "角色锚点", "group": "character", "keyword": "canonical角色英文名"},
@@ -277,7 +277,7 @@ EXAMPLES = """# 5. 完整示例
   },
   "args": {
     "prompt_12": "worst quality, low quality, score_1, score_2, score_3, watermark, logo, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, blurry",
-    "width": 1152, "height": 1536, "steps": 8,
+    "width": 1152, "height": 1536, "steps": 6,
     "filename_prefix": "anima/2026-01-01/anima_base_v1_0-none-kanade_tachibana"
   },
   "tag_queries": [
@@ -307,7 +307,7 @@ EXAMPLES = """# 5. 完整示例
   },
   "args": {
     "prompt_12": "worst quality, low quality, score_1, score_2, score_3, watermark, logo, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, blurry",
-    "width": 1536, "height": 1024, "steps": 8,
+    "width": 1536, "height": 1024, "steps": 6,
     "filename_prefix": "anima/ref_mode_v1_0"
   },
   "tag_queries": []
@@ -335,7 +335,7 @@ EXAMPLES = """# 5. 完整示例
   "args": {
     "prompt_12": "worst quality, low quality, score_1, score_2, score_3, watermark, logo, bad anatomy, bad hands, extra limbs, blurry",
     "artist_chain": "wlop, (sakimichan:1.2), (krenz:0.7)",
-    "width": 1024, "height": 1536, "steps": 8,
+    "width": 1024, "height": 1536, "steps": 6,
     "filename_prefix": "anima/artist_mixer_v1_0"
   },
   "tag_queries": [

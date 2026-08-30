@@ -166,7 +166,7 @@
   "38": {
     "class_type": "AnimaLLLiteApply",
     "inputs": {
-      "strength": 1,
+      "strength": 0.8,
       "start_percent": 0,
       "end_percent": 1,
       "model": [
@@ -271,7 +271,7 @@
     "class_type": "InstantReferenceLoRA",
     "inputs": {
       "model_strength": 0.4,
-      "clip_strength": 0.6,
+      "clip_strength": 0.4,
       "profile": "anima",
       "model": [
         "37",

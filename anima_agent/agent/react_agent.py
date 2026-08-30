@@ -84,7 +84,7 @@ TUNE_PARAMS: dict[str, tuple] = {
     "artist_anchor_q": (0, 1, 0, "bool"),
     # Instant Reference 参数(仅 instantref 工作流)
     "instantref_model_strength": (0.0, 0.6, 0.4, "float"),
-    "instantref_clip_strength": (0.0, 2.0, 1.35, "float"),
+    "instantref_clip_strength": (0.0, 0.6, 0.4, "float"),
     "instantref_start_at": (0.0, 1.0, 0.35, "float"),
     "instantref_end_at": (0.0, 1.0, 1.0, "float"),
     "instantref_layer_filter": ("", "OUT", "", "str"),
@@ -489,7 +489,7 @@ class SimpleAgent:
         args_data.setdefault("width", brief.canvas[0])
         args_data.setdefault("height", brief.canvas[1])
         args_data.setdefault("batch_size", 5)
-        args_data.setdefault("steps", 8)
+        args_data.setdefault("steps", 6)
         args_data.setdefault("rtx_vsr_quality", "ULTRA")
 
         args = AnimaArgs(**args_data)
@@ -749,7 +749,7 @@ class SimpleAgent:
         args_data.setdefault("width", 1152)
         args_data.setdefault("height", 1536)
         args_data.setdefault("batch_size", 5)
-        args_data.setdefault("steps", 8)
+        args_data.setdefault("steps", 6)
         args_data.setdefault("rtx_vsr_quality", "ULTRA")
         if not args_data.get("filename_prefix"):
             args_data["filename_prefix"] = "anima/edit"
@@ -835,7 +835,7 @@ class SimpleAgent:
         final_args.setdefault("width", 1152)
         final_args.setdefault("height", 1536)
         final_args.setdefault("batch_size", 5)
-        final_args.setdefault("steps", 8)
+        final_args.setdefault("steps", 6)
         final_args.setdefault("rtx_vsr_quality", "ULTRA")
         final_args.setdefault("filename_prefix", "anima/edit")
 
