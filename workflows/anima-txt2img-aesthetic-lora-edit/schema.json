@@ -38,7 +38,7 @@
       "description": "Edit negative prompt (comma-separated tags)"
     },
     "ref_image": {
-      "node_id": "20",
+      "node_id": "79",
       "field": "image",
       "required": true,
       "type": "image",
@@ -142,61 +142,12 @@
       "type": "float",
       "description": "Denoise strength (default 1.0)"
     },
-    "lora_masterpiece_strength": {
-      "node_id": "70",
-      "field": "lora_1.strength",
-      "required": false,
-      "type": "float",
-      "description": "anima-base-1-masterpiece-v51 LoRA strength (default 0.5)"
-    },
-    "lora_highres_strength": {
-      "node_id": "70",
-      "field": "lora_2.strength",
-      "required": false,
-      "type": "float",
-      "description": "anima-highres-aesthetic-boost LoRA strength (default 0.5)"
-    },
-    "lora_rl_strength": {
-      "node_id": "70",
-      "field": "lora_3.strength",
-      "required": false,
-      "type": "float",
-      "description": "anima-rl-v0.1 LoRA strength (default 0.5)"
-    },
-    "lora_reina_strength": {
-      "node_id": "70",
-      "field": "lora_4.strength",
-      "required": false,
-      "type": "float",
-      "description": "reina_v1_epoch14 LoRA strength (default 0.2)"
-    },
-    "lora_hands_strength": {
-      "node_id": "70",
-      "field": "lora_5.strength",
-      "required": false,
-      "type": "float",
-      "description": "basic hands LoRA strength (default 0.75)"
-    },
-    "lora_zoda_strength": {
-      "node_id": "70",
-      "field": "lora_6.strength",
-      "required": false,
-      "type": "float",
-      "description": "zoda_v3_anima LoRA strength (default 0.1)"
-    },
-    "lora_stabilizer_strength": {
-      "node_id": "70",
-      "field": "lora_7.strength",
-      "required": false,
-      "type": "float",
-      "description": "illustriousXLv01_stabilizer_v1.198 LoRA strength (default 0.25)"
-    },
     "lllite_strength": {
       "node_id": "38",
       "field": "strength",
       "required": false,
       "type": "float",
-      "description": "AnimaLLLiteApply inpaint patch strength (default 1.25)"
+      "description": "AnimaLLLiteApply inpaint patch strength (default 1.0)"
     },
     "lllite_start": {
       "node_id": "38",

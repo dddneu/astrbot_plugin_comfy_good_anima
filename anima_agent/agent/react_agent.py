@@ -83,7 +83,7 @@ TUNE_PARAMS: dict[str, tuple] = {
     "artist_static_capture": (0, 1, 0, "bool"),
     "artist_anchor_q": (0, 1, 0, "bool"),
     # Instant Reference 参数(仅 instantref 工作流)
-    "instantref_model_strength": (0.0, 2.0, 1.2, "float"),
+    "instantref_model_strength": (0.0, 0.6, 0.4, "float"),
     "instantref_clip_strength": (0.0, 2.0, 1.35, "float"),
     "instantref_start_at": (0.0, 1.0, 0.35, "float"),
     "instantref_end_at": (0.0, 1.0, 1.0, "float"),

@@ -146,5 +146,11 @@
       "images": ["60", 0],
       "filename_prefix": "anima/%year%-%month%-%day%/anima_base_v1_0-artist_tag-character_tag"
     }
+  },
+  "90": {
+    "class_type": "easy cleanGpuUsed",
+    "inputs": {
+      "anything": ["52", 0]
+    }
   }
 }

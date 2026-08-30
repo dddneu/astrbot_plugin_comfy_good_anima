@@ -221,5 +221,11 @@
         0
       ]
     }
+  },
+  "90": {
+    "class_type": "easy cleanGpuUsed",
+    "inputs": {
+      "anything": ["52", 0]
+    }
   }
 }

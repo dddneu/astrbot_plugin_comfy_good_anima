@@ -130,5 +130,11 @@
       "cache_device": "cuda",
       "teacache_version": "v1 (Legacy Fast)"
     }
+  },
+  "90": {
+    "class_type": "easy cleanGpuUsed",
+    "inputs": {
+      "anything": ["52", 0]
+    }
   }
 }

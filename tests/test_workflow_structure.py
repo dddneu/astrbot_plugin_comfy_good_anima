@@ -26,7 +26,16 @@ WORKFLOWS = (
     "anima-txt2img-aesthetic-lora-edit",
 )
 
-# 两工作流共用的 7-LoRA 叠层(txt2img 在节点 72 的 lora_0..lora_6;edit 在节点 70 的 lora_1..lora_7)
+# 工作流末尾统一接 easy cleanGpuUsed 清理显存(接到各自 SaveImage 的输出)
+EXPECTED_CLEANUP = {
+    "anima-txt2img-aesthetic-lora": ("90", "52"),
+    "anima-txt2img-aesthetic-lora-edit": ("80", "9"),
+    "anima-txt2img-aesthetic-lora-artist-mixer": ("90", "52"),
+    "anima-txt2img-base": ("90", "52"),
+}
+
+# LoRA 叠层:txt2img 在节点 72(lora_0..lora_6);edit 的 Power Lora Loader(70)无 LoRA
+# (身份由 InstantReferenceLoRA 承担)
 EXPECTED_LORAS = {
     "anima-txt2img-aesthetic-lora": (
         "72",
@@ -40,18 +49,7 @@ EXPECTED_LORAS = {
             "lora_6": "illustriousXLv01_stabilizer_v1.198.safetensors",
         },
     ),
-    "anima-txt2img-aesthetic-lora-edit": (
-        "70",
-        {
-            "lora_1": "anima-base-1-masterpiece-v51.safetensors",
-            "lora_2": "anima-highres-aesthetic-boost.safetensors",
-            "lora_3": "anima-rl-v0.1.safetensors",
-            "lora_4": "reina_v1_epoch14.safetensors",
-            "lora_5": "basic hands.safetensors",
-            "lora_6": "zoda_v3_anima.safetensors",
-            "lora_7": "illustriousXLv01_stabilizer_v1.198.safetensors",
-        },
-    ),
+    "anima-txt2img-aesthetic-lora-edit": ("70", {}),
 }
 
 # 单 FLS 采样器默认参数(txt2img / edit)
@@ -61,7 +59,7 @@ EXPECTED_FLS = {
         "sampler": "euler", "latent_from": "28",
     },
     "anima-txt2img-aesthetic-lora-edit": {
-        "nid": "40", "steps": 6, "cfg": 1.5, "denoise": 1.0,
+        "nid": "40", "steps": 4, "cfg": 1.5, "denoise": 1.0,
         "sampler": "dpmpp_2m_sde", "latent_from": "55",
     },
 }
@@ -93,11 +91,15 @@ def test_single_fls_defaults(wfid):
 
 @pytest.mark.parametrize("wfid", WORKFLOWS)
 def test_power_lora_loader_stack(wfid):
-    """Power Lora Loader 叠层:节点存在、7 个 LoRA 槽位齐全、接在 booster 之后。"""
+    """Power Lora Loader 叠层:节点存在、LoRA 槽位与预期一致(edit 无 LoRA)。"""
     wf = _wf(wfid)
     lora_node_id, loras = EXPECTED_LORAS[wfid]
     assert wf[lora_node_id]["class_type"] == "Power Lora Loader (rgthree)"
     ins = wf[lora_node_id]["inputs"]
+    if not loras:
+        # edit 的 Power Lora Loader 无 LoRA 槽位(身份由 InstantReferenceLoRA 承担)
+        assert not any(k.startswith("lora_") for k in ins), f"{wfid} 不应有 LoRA 槽位"
+        return
     for slot, lora_name in loras.items():
         assert slot in ins, f"{wfid} 缺 {slot}"
         assert ins[slot]["lora"] == lora_name, f"{wfid} {slot} 应为 {lora_name}"
@@ -120,23 +122,45 @@ def test_txt2img_model_and_clip_chain():
 
 
 def test_edit_model_and_inpaint_chain():
-    """edit:37(booster turbo)→70→38(LLLite)→36(TeaCache)→40;CLIP 走 70 的 clip 输出→2/3。"""
+    """edit:37(booster turbo)→77(InstantRef)→70(Power Lora)→38(LLLite)→36→40;
+    CLIP:8→77→70→2/3(修正后的接线顺序);参考图节点 79;cleanGpuUsed 80。"""
     wf = _wf("anima-txt2img-aesthetic-lora-edit")
     assert wf["37"]["inputs"]["model_name"] == "anima-turbo-v1.1.safetensors"
-    assert wf["70"]["inputs"]["model"] == ["37", 0]
-    assert wf["70"]["inputs"]["clip"] == ["8", 0]
+    # InstantReferenceLoRA(77):先对基础模型+clip 应用参考,再进 Power Lora(70)
+    assert wf["77"]["class_type"] == "InstantReferenceLoRA"
+    assert wf["77"]["inputs"]["model"] == ["37", 0]
+    assert wf["77"]["inputs"]["clip"] == ["8", 0]
+    assert wf["77"]["inputs"]["images"] == ["25", 0]
+    assert wf["77"]["inputs"]["vae"] == ["4", 0]
+    assert wf["77"]["inputs"]["train_options"] == ["78", 0]
+    assert wf["77"]["inputs"]["profile"] == "anima"
+    assert wf["77"]["inputs"]["model_strength"] == 0.4
+    assert wf["77"]["inputs"]["clip_strength"] == 0.6
+    # Power Lora Loader(70):吃 InstantRef 的 model/clip 输出,无 LoRA 槽位
+    assert wf["70"]["inputs"]["model"] == ["77", 0]
+    assert wf["70"]["inputs"]["clip"] == ["77", 1]
+    assert not any(k.startswith("lora_") for k in wf["70"]["inputs"]), "edit 的 70 不应有 LoRA 槽位"
+    # LLLite 用 Power Lora 后的模型
     assert wf["38"]["inputs"]["model"] == ["70", 0]
     assert wf["38"]["inputs"]["model_patch"] == ["39", 0]
-    assert wf["38"]["inputs"]["strength"] == 1.25
+    assert wf["38"]["inputs"]["strength"] == 1
     assert wf["36"]["inputs"]["model"] == ["38", 0]
     assert wf["40"]["inputs"]["model"] == ["36", 0]
+    # CLIP:正负向都走 70[1](InstantRef+LoRA 后的 clip)
     assert wf["2"]["inputs"]["clip"] == ["70", 1]
     assert wf["3"]["inputs"]["clip"] == ["70", 1]
-    # inpaint:20(LoadImage __REF_IMAGE__)→25→18(ICLoRAConcat)→16(InpaintModelConditioning)
-    assert wf["20"]["inputs"]["image"] == "__REF_IMAGE__"
+    # ReferenceTrainOptions(78)
+    assert wf["78"]["class_type"] == "ReferenceTrainOptions"
+    assert wf["78"]["inputs"]["steps_override"] == 8
+    # inpaint:79(LoadImage __REF_IMAGE__)→25→18(ICLoRAConcat)→16(InpaintModelConditioning)
+    assert wf["79"]["inputs"]["image"] == "__REF_IMAGE__"
+    assert wf["25"]["inputs"]["image"] == ["79", 0]
     assert wf["18"]["inputs"]["object_image"] == ["25", 0]
     assert wf["16"]["inputs"]["pixels"] == ["18", 0]
     assert wf["16"]["inputs"]["mask"] == ["18", 2]
+    # 结尾清理显存:80 easy cleanGpuUsed ← SaveImage(9)
+    assert wf["80"]["class_type"] == "easy cleanGpuUsed"
+    assert wf["80"]["inputs"]["anything"] == ["9", 0]
 
 
 @pytest.mark.parametrize("wfid", WORKFLOWS)
@@ -166,11 +190,27 @@ def test_inject_args_nested_lora_strength():
     assert out["72"]["inputs"]["lora_0"]["strength"] == 0.5
 
 
-def test_edit_inject_args_nested_lora_strength():
-    wf = _wf("anima-txt2img-aesthetic-lora-edit")
+def test_edit_schema_has_no_lora_params():
+    """edit 的 Power Lora Loader(70)无 LoRA 槽位,schema 不应再声明 lora_* 参数。"""
     schema = load_schema("anima-txt2img-aesthetic-lora-edit")
-    out = inject_args(wf, schema, {"lora_zoda_strength": 0.3})
-    assert out["70"]["inputs"]["lora_6"]["strength"] == 0.3
+    assert not any(k.startswith("lora_") for k in schema["parameters"]), (
+        "edit schema 不应有 lora_* 参数(70 已无 LoRA 槽位)"
+    )
+    # 参考图注入节点已移到 79
+    assert schema["parameters"]["ref_image"]["node_id"] == "79"
+
+
+@pytest.mark.parametrize("wfid", list(EXPECTED_CLEANUP.keys()))
+def test_clean_gpu_used_all_workflows(wfid):
+    """所有生成工作流结尾都有 easy cleanGpuUsed,接到各自 SaveImage 的输出。"""
+    wf = _wf(wfid)
+    cleanup_id, save_id = EXPECTED_CLEANUP[wfid]
+    node = wf[cleanup_id]
+    assert node["class_type"] == "easy cleanGpuUsed", f"{wfid} 缺 easy cleanGpuUsed"
+    assert node["inputs"]["anything"] == [save_id, 0], (
+        f"{wfid} cleanGpuUsed 应接到 SaveImage({save_id})"
+    )
+    assert wf[save_id]["class_type"] == "SaveImage"
 
 
 def test_sync_fls_seeds_single_fls():

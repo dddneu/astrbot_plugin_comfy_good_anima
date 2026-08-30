@@ -98,7 +98,7 @@
       "base_mask": null
     }
   },
-  "20": {
+  "79": {
     "class_type": "LoadImage",
     "inputs": {
       "image": "__REF_IMAGE__"
@@ -108,7 +108,7 @@
     "class_type": "AILab_ImageResize",
     "inputs": {
       "image": [
-        "20",
+        "79",
         0
       ],
       "custom_width": 0,
@@ -166,7 +166,7 @@
   "38": {
     "class_type": "AnimaLLLiteApply",
     "inputs": {
-      "strength": 1.25,
+      "strength": 1,
       "start_percent": 0,
       "end_percent": 1,
       "model": [
@@ -196,8 +196,8 @@
   "40": {
     "class_type": "FLS_SamplerV4",
     "inputs": {
-      "seed": 355448254686714,
-      "steps": 6,
+      "seed": 175508182079791,
+      "steps": 4,
       "cfg": 1.5,
       "sampler_name": "dpmpp_2m_sde",
       "scheduler": "simple",
@@ -257,47 +257,65 @@
   "70": {
     "class_type": "Power Lora Loader (rgthree)",
     "inputs": {
-      "lora_1": {
-        "on": true,
-        "lora": "anima-base-1-masterpiece-v51.safetensors",
-        "strength": 0.5
-      },
-      "lora_2": {
-        "on": true,
-        "lora": "anima-highres-aesthetic-boost.safetensors",
-        "strength": 0.5
-      },
-      "lora_3": {
-        "on": true,
-        "lora": "anima-rl-v0.1.safetensors",
-        "strength": 0.5
-      },
-      "lora_4": {
-        "on": true,
-        "lora": "reina_v1_epoch14.safetensors",
-        "strength": 0.2
-      },
-      "lora_5": {
-        "on": true,
-        "lora": "basic hands.safetensors",
-        "strength": 0.75
-      },
-      "lora_6": {
-        "on": true,
-        "lora": "zoda_v3_anima.safetensors",
-        "strength": 0.1
-      },
-      "lora_7": {
-        "on": true,
-        "lora": "illustriousXLv01_stabilizer_v1.198.safetensors",
-        "strength": 0.25
-      },
+      "model": [
+        "77",
+        0
+      ],
+      "clip": [
+        "77",
+        1
+      ]
+    }
+  },
+  "77": {
+    "class_type": "InstantReferenceLoRA",
+    "inputs": {
+      "model_strength": 0.4,
+      "clip_strength": 0.6,
+      "profile": "anima",
       "model": [
         "37",
         0
       ],
       "clip": [
         "8",
+        0
+      ],
+      "images": [
+        "25",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ],
+      "train_options": [
+        "78",
+        0
+      ]
+    }
+  },
+  "78": {
+    "class_type": "ReferenceTrainOptions",
+    "inputs": {
+      "steps_override": 8,
+      "learning_rate_override": 0,
+      "network_dim_override": 0,
+      "network_alpha_override": 0,
+      "resolution_override": "",
+      "gradient_checkpointing": true,
+      "cache_latents": true,
+      "cache_text_encoder_outputs": true,
+      "seed_override": -1,
+      "force_retrain": false,
+      "train_batch_size_override": 0
+    }
+  },
+  "80": {
+    "class_type": "easy cleanGpuUsed",
+    "inputs": {
+      "anything": [
+        "9",
         0
       ]
     }
