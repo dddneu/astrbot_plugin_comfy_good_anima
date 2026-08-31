@@ -1,5 +1,0 @@
-{
-  "description": "参考图自动打标(Qwen3-VL 路线):LoadImage → Resize → CLIPLoader(qwen_image) → TextGenerate → captions。输出自然语言结构化描述(身材/比例/五官,单任务精简指令),与 tagger-pixai 并联运行融合结果。",
-  "enabled": true,
-  "parameters": {}
-}

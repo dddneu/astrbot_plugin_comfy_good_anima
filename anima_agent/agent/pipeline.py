@@ -656,6 +656,10 @@ class AgentPipeline:
             hard_tags = self._replace_anchor_tag(hard_tags, spec, prompt_form)
 
         draft.three_layer.hard_tags = hard_tags
+        
+        # 去重：标准化空格和下划线后去重
+        draft.three_layer.hard_tags = self._deduplicate_tags(draft.three_layer.hard_tags)
+        
         # missing 转 nltags(不伪造 tag;用完整句子,避免被 nltags_is_tag_list 检查误判)
         # if batch.missing:
         #     concepts = "、".join(batch.missing)
@@ -706,6 +710,28 @@ class AgentPipeline:
         if not replaced:
             out.append(confirmed_prompt)
         return out
+
+    @staticmethod
+    def _deduplicate_tags(tags: list[str]) -> list[str]:
+        """去重 tags，标准化空格和下划线后比较。
+        
+        保留第一次出现的版本（保留 LLM 原始格式优先）。
+        例如：["silver hair", "silver_hair"] → ["silver hair"]
+        """
+        seen = set()
+        result = []
+        
+        for tag in tags:
+            # 提取不带权重的 tag
+            bare = _strip_weight_suffix(tag).lower().strip()
+            # 标准化：空格和下划线统一为空格
+            normalized = bare.replace("_", " ").replace("-", " ").strip()
+            
+            if normalized not in seen:
+                seen.add(normalized)
+                result.append(tag)
+        
+        return result
 
     async def _sanitize_ref_character_tags(
         self,

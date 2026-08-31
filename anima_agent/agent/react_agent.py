@@ -234,6 +234,7 @@ class SimpleAgent:
             # 直接用 entities 检索(不再单独调 LLM NER)。
             merged_entities: Optional[list] = None
             merged_negative: Optional[list] = None
+            distilled_for_replace: Optional[str] = None  # 保留带占位符的版本
             if effective_model_size == "small":
                 try:
                     distilled = await maybe_await(
@@ -253,10 +254,10 @@ class SimpleAgent:
                                 distilled = str(distilled_data["refined_intent"]).strip()
                             entities = distilled_data.get("entities")
                             if isinstance(entities, list):
-                                # 新格式:entities 数组 → 合并 NER 直通检索
-                                distilled = restore_entity_placeholders(distilled, entities)
+                                # 新格式:entities 数组 → 先保留占位符，等 resolve_entities 结果
                                 merged_entities = entities
                                 merged_negative = distilled_data.get("negative_elements") or []
+                                distilled_for_replace = distilled  # 保留带 [ENT_X] 占位符的版本
                             else:
                                 # 旧格式兼容:entity_map 字典
                                 distilled = restore_entity_placeholders(
@@ -281,27 +282,50 @@ class SimpleAgent:
 
             if effective_model_size == "small" and merged_entities is not None:
                 logger.info("[Edit实体解析] 小模型合并蒸馏路径 → resolve_entities(entities=%s)", merged_entities)
-                confirmed_tags, _nltags, _neg = await resolve_entities(
+                confirmed_tags, resolved_nltags, resolved_neg = await resolve_entities(
                     merged_entities, merged_negative
                 )
+                # 用 confirmed_en_tags 替换 [ENT_X] 占位符，而不是原始中文名
+                if confirmed_tags and distilled_for_replace:
+                    entity_to_tag = {}
+                    for i, ent in enumerate(merged_entities):
+                        if isinstance(ent, dict):
+                            eid = str(ent.get("id") or "").strip()
+                            if i < len(confirmed_tags):
+                                entity_to_tag[eid] = confirmed_tags[i]
+                    
+                    user_prompt = distilled_for_replace
+                    for eid, en_tag in entity_to_tag.items():
+                        user_prompt = user_prompt.replace(f"[{eid}]", en_tag)
+                        user_prompt = user_prompt.replace(eid, en_tag)
+                    logger.info("[Edit占位符替换] %s → %s", distilled_for_replace, user_prompt)
             else:
                 logger.info("[Edit实体解析] 兜底 NER 路径")
-                confirmed_tags, _nltags, _neg = await resolve_cn_tags(
+                confirmed_tags, resolved_nltags, resolved_neg, entity_mapping = await resolve_cn_tags(
                     user_prompt, self.llm_complete
                 )
+                resolved_nltags = resolved_nltags or []
+                resolved_neg = resolved_neg or []
+                # 用英文 tag 替换用户输入中的中文实体
+                if entity_mapping:
+                    for cn_name, en_tag in entity_mapping.items():
+                        user_prompt = user_prompt.replace(cn_name, en_tag)
+                    logger.info("[Edit NER替换] %s → %s", entity_mapping, user_prompt)
+            
+            # 构建 Edit 模式用户消息，包含已确认的英文 tag
+            msg_parts = [user_prompt]
             if confirmed_tags:
-                user_prompt = (
-                    f"{user_prompt}\n\n[已确认角色/作品英文 Tag] "
-                    + ", ".join(confirmed_tags)
-                )
-
-            return await self._draft_edit_mode(wd14_tags, user_prompt)
+                msg_parts.append(f"\n[已确认角色/作品英文 Tag] {', '.join(confirmed_tags)}")
+            # resolved_nltags（查无对应 Tag 的元素）不再传递，让模型根据上下文自行理解描述方式
+            
+            return await self._draft_edit_mode(wd14_tags, "\n".join(msg_parts))
 
         # Normal/Random 模式
         # 小模型统一蒸馏 + NER(合并):一次 LLM 调用同时产出
         # structured_intent 与 entities 数组,直接用 entities 检索,不再单独调 NER。
         merged_entities: Optional[list] = None
         merged_negative: Optional[list] = None
+        distilled_for_replace: Optional[str] = None  # 保留带占位符的版本，用于后续替换
         if effective_model_size == "small":
             try:
                 distilled = await maybe_await(
@@ -323,10 +347,12 @@ class SimpleAgent:
                             distilled = str(distilled_data["refined_intent"]).strip()
                         entities = distilled_data.get("entities")
                         if isinstance(entities, list):
-                            # 新格式:entities 数组 → 合并 NER 直通检索
-                            distilled = restore_entity_placeholders(distilled, entities)
+                            # 新格式:entities 数组 → 先保留占位符，等 resolve_entities 结果
                             merged_entities = entities
                             merged_negative = distilled_data.get("negative_elements") or []
+                            distilled_for_replace = distilled  # 保留带 [ENT_X] 占位符的版本
+                            # 注意:这里不调用 restore_entity_placeholders，
+                            # 等 resolve_entities 拿到 confirmed_en_tags 后再用英文 tag 替换
                         else:
                             # 旧格式兼容:entity_map 字典(无 entities → 走独立 NER)
                             distilled = restore_entity_placeholders(
@@ -354,11 +380,33 @@ class SimpleAgent:
             confirmed_en_tags, nltags, negative_from_ner = await resolve_entities(
                 merged_entities, merged_negative
             )
+            # 用 confirmed_en_tags 替换 [ENT_X] 占位符，而不是原始中文名
+            if confirmed_en_tags and distilled_for_replace:
+                # 构建 entity_id → confirmed_en_tag 的映射
+                # entities 中的 id 形如 "[ENT_1]" 或 "ENT_1"
+                entity_to_tag = {}
+                for i, ent in enumerate(merged_entities):
+                    if isinstance(ent, dict):
+                        eid = str(ent.get("id") or "").strip()
+                        if i < len(confirmed_en_tags):
+                            entity_to_tag[eid] = confirmed_en_tags[i]
+                
+                # 替换占位符
+                user_prompt = distilled_for_replace
+                for eid, en_tag in entity_to_tag.items():
+                    user_prompt = user_prompt.replace(f"[{eid}]", en_tag)
+                    user_prompt = user_prompt.replace(eid, en_tag)
+                logger.info("[占位符替换] %s → %s", distilled_for_replace, user_prompt)
         else:
             logger.info("[实体解析] 兜底 NER 路径 → resolve_cn_tags")
-            confirmed_en_tags, nltags, negative_from_ner = await resolve_cn_tags(
+            confirmed_en_tags, nltags, negative_from_ner, entity_mapping = await resolve_cn_tags(
                 user_prompt, self.llm_complete
             )
+            # 用英文 tag 替换用户输入中的中文实体
+            if entity_mapping:
+                for cn_name, en_tag in entity_mapping.items():
+                    user_prompt = user_prompt.replace(cn_name, en_tag)
+                logger.info("[NER替换] %s → %s", entity_mapping, user_prompt)
 
         # 构建用户消息
         user_msg = self._build_user_message(
