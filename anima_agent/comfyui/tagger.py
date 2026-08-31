@@ -202,12 +202,15 @@ MAX_VLM_RETRIES = 3
 # 画风段的标记行(仅防御性解析用;正常路径靠 TEXTGEN_STYLE_PROMPT 单独取画风)
 STYLE_MARKER = "[STYLE]"
 # 已知的文本输出节点(ComfyUI 只给输出节点发 executed 事件,必须用它收 captions)
+# 优先级:ShowText|pythongosssss 优先 — 来自 ComfyUI-Custom-Scripts,绝大多数环境安装。
+# PreviewText 排最后:它是第三方自定义节点(非 ComfyUI 核心),部分环境 object_info
+# 里会注册它但运行时缺包,提交后报 "missing_node_type: PreviewText" → 兜底失败。
 TEXT_NODE_CANDIDATES = (
-    "PreviewText",                # ComfyUI 核心(较新版本自带)
-    "ShowText|pythongosssss",     # ComfyUI-Custom-Scripts
+    "ShowText|pythongosssss",     # ComfyUI-Custom-Scripts(主流)
     "ShowText",                   # 部分包
     "TextPreview",                # 部分包
     "DisplayText",                # 部分包
+    "PreviewText",                # 第三方节点(不依赖,排最后兜底)
 )
 # 兜底:按节点名扫描 show/preview/display + text
 _TEXT_NODE_NAME_RE = re.compile(
@@ -221,7 +224,15 @@ QWENVL_TIMEOUT = 300.0
 # 覆盖默认值(与用户保存的工作流一致;不在此列表的字段用节点默认值)
 # PixAI Booru Tagger 的 threshold/character_threshold 由 Load Booru Tagger 连接提供,
 # 因此这里不再需要 Miaoshouai 时代的 model/tags 覆盖。
-TAGGER_OVERRIDES: dict[str, Any] = {}
+# 注:以下 4 个 widget 在部分 Booru Tagger 包版本里被声明为 required,缺失会让
+# ComfyUI 服务端返回 "Required input is missing"(prompt_outputs_failed_validation);
+# 即使在 object_info 里有 default,显式声明避免被可选/必填边界变化坑到。
+TAGGER_OVERRIDES: dict[str, Any] = {
+    "exclude_tags": "",       # STRING:逗号分隔的额外排除 tag
+    "use_best_threshold": False,  # BOOLEAN:用每类动态阈值
+    "sort_tags": True,        # BOOLEAN:按 confidence 降序输出
+    "trailing_comma": False,  # BOOLEAN:末尾逗号
+}
 # tagger-qwenvl 的 CLIPLoader:qwen_image 类型 + 用户保存的 Qwen3-VL 模型
 # (服务端枚举里没有该文件时 _default_widget_value 会自动回退到枚举首值)
 QWENVL_CLIP_OVERRIDES: dict[str, Any] = {
@@ -403,13 +414,20 @@ def _is_widget_spec(spec: Any) -> bool:
     widget 型:组合枚举(第一个元素是 list)、INT/FLOAT/BOOLEAN/STRING/COMBO,
     以及新版 io 节点的 DynamicCombo(COMFY_DYNAMICCOMBO_V3,值是 option key)。
     连接型(IMAGE/CLIP/LATENT/MASK/AUDIO...)不填值,留空让模板连接决定。
+
+    兼容部分 ComfyUI 版本返回的精简 spec 格式:
+    - 裸类型字符串:"STRING" / "INT" / ...
+    - 单元素列表:["STRING"] / ["INT"] / ...
     """
-    if not isinstance(spec, (list, tuple)) or not spec:
-        return False
-    t = spec[0]
-    if isinstance(t, list):  # combo 枚举
-        return True
-    return isinstance(t, str) and (t in _WIDGET_TYPES or t in _DYNAMIC_COMBO_TYPES)
+    if isinstance(spec, str):  # 裸类型字符串(精简格式)
+        return spec in _WIDGET_TYPES or spec in _DYNAMIC_COMBO_TYPES
+    if isinstance(spec, (list, tuple)) and spec:
+        t = spec[0]
+        if isinstance(t, list):  # combo 枚举
+            return True
+        if isinstance(t, str):
+            return t in _WIDGET_TYPES or t in _DYNAMIC_COMBO_TYPES
+    return False
 
 
 def _fill_required_inputs(
@@ -428,6 +446,11 @@ def _fill_required_inputs(
             开(如 TextGenerate:它的 sampling_mode.* 嵌套采样组可能声明在 optional,
             但 sampling_mode="on" 时运行时按必填校验——漏填会 submit 校验失败)。
             连接型 optional(video/audio/mask 等)一律跳过。
+
+    注意:对 override 里有、但 object_info 未声明的字段(如部分自定义节点的 required
+    widget 在 object_info 里只在 optional 暴露,但服务端 prompt_outputs_failed_validation
+    会按必填校验),也会一并写入 — 这避免「object_info 说在 optional、服务端按
+    required 校验」的版本差异坑。
     """
     inputs = dict(node_spec)
     info = object_info.get(node_class, {}).get("input", {})
@@ -442,16 +465,34 @@ def _fill_required_inputs(
         if not _is_widget_spec(spec):
             continue  # 连接型输入不填值
         inputs[fname] = _default_widget_value(spec, overrides.get(fname))
+    # 兜底:override 里有、但 object_info 根本没声明的字段(部分节点包版本差异)。
+    # 只填 widget 类型(STRING/INT/FLOAT/BOOLEAN),避免覆盖连接型占位。
+    for fname, val in overrides.items():
+        if fname in inputs:
+            continue
+        if not isinstance(val, (str, int, float, bool)):
+            continue
+        inputs[fname] = val
     return inputs
 
 
-def _default_widget_value(spec: list, override: Any) -> Any:
+def _default_widget_value(spec: Any, override: Any) -> Any:
     """object_info 字段 spec → 默认值。
 
     spec 形如:["INT", {"min":..,"max":..,"default":..}] / ["FLOAT", {...}] /
-    ["BOOLEAN", {...}] / [["opt1","opt2"], {"default":..}] / [["opt1","opt2"]]。
+    ["BOOLEAN", {...}] / [["opt1","opt2"], {"default":..}] / [["opt1","opt2"]] /
+    裸 "STRING" / ["STRING"](精简格式,无 default 时退到类型零值)。
     """
-    type_info = spec[0] if spec else ""
+    # 精简格式:裸字符串 / 单元素列表(无 meta)
+    if isinstance(spec, str):
+        if override is not None:
+            return override
+        return _zero_value_for(spec)
+    if not spec:
+        if override is not None:
+            return override
+        return ""
+    type_info = spec[0]
     meta = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
 
     if isinstance(type_info, list):  # combo:枚举列表
@@ -461,7 +502,7 @@ def _default_widget_value(spec: list, override: Any) -> Any:
         if meta.get("default") in options:
             return meta["default"]
         return options[0] if options else ""
-    if type_info in _DYNAMIC_COMBO_TYPES:
+    if isinstance(type_info, str) and type_info in _DYNAMIC_COMBO_TYPES:
         # 新版 io DynamicCombo:值必须是 options 里的 option key(如 "on"/"off")
         options = [
             o.get("key") for o in (meta.get("options") or [])
@@ -481,6 +522,17 @@ def _default_widget_value(spec: list, override: Any) -> Any:
     if type_info == "FLOAT":
         return meta.get("min", 0.0)
     if type_info == "BOOLEAN":
+        return False
+    return ""
+
+
+def _zero_value_for(type_name: str) -> Any:
+    """widget 类型的零值(无 default/meta 时的兜底)。"""
+    if type_name == "INT":
+        return 0
+    if type_name == "FLOAT":
+        return 0.0
+    if type_name == "BOOLEAN":
         return False
     return ""
 
@@ -747,7 +799,11 @@ class RefImageTagger:
         return self._object_info
 
     def _select_text_node(self, info: dict) -> str:
-        """选择可用的文本输出节点 class(核心 PreviewText 优先,再按名字扫描)。"""
+        """选择可用的文本输出节点 class(ShowText|pythongosssss 优先,再按名字扫描)。
+
+        PreviewText(第三方节点)排最后:object_info 里出现但运行时缺包时,
+        提交会被服务端判 missing_node_type → 整次打标失败。
+        """
         for cls in TEXT_NODE_CANDIDATES:
             if cls in info:
                 return cls
@@ -756,8 +812,8 @@ class RefImageTagger:
             if _TEXT_NODE_NAME_RE.search(cls):
                 return cls
         raise ComfyUIError(
-            "ComfyUI 未发现文本输出节点(如核心 PreviewText / ShowText|pythongosssss),"
-            "参考图打标无法回传 tag。请安装 ComfyUI-Custom-Scripts 或升级 ComfyUI,"
+            "ComfyUI 未发现文本输出节点(如 ShowText|pythongosssss / PreviewText),"
+            "参考图打标无法回传 tag。请安装 ComfyUI-Custom-Scripts,"
             "然后**重启 ComfyUI**(节点列表在启动时缓存,运行中安装不生效)。"
         )
 

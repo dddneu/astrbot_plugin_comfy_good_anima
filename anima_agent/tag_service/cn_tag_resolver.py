@@ -561,7 +561,9 @@ async def resolve_cn_tags(
 #
 # entities 元素形如:
 #   {"id": "[ENT_1]", "type": "character|artist|series",
-#    "name": "原始中文名", "context_series": "作品名或 None", "aliases": [...]}
+#    "name": "原始中文名", "context_series": "作品名或 None"}
+# 注意:端侧小模型已不再输出 aliases 字段(由 tag 库 aliases 列统一维护),
+# 因此本函数不读取 entity.aliases,以避免 LLM 编造的别名污染 Rank0 撞库。
 # 与 resolve_cn_tags 同构:返回 (confirmed_tags, nltags, negative_elements)。
 # =============================================================================
 
@@ -582,8 +584,11 @@ async def resolve_entities(
         - nltags: 查无此 Tag 降级到自然语言的原文
         - negative_elements: 用户排除项(原样透传)
 
-    注意:type=artist 的实体不走中英对照检索(画师由标签库 artist 确认 /
-    随机池处理),直接跳过,避免产生垃圾 nltags。
+    注意:
+    - type=artist 的实体不走中英对照检索(画师由标签库 artist 确认 /
+      随机池处理),直接跳过,避免产生垃圾 nltags。
+    - 不再读取 entity.aliases:端侧小模型会编造错误别名污染 Rank0 精确 IN(...)
+      撞库与跨上下文命中;别名由 tag 库 aliases 列统一维护。
     """
     from anima_agent.tag_service._ner import CharacterEntity, NERResult
     from anima_agent.tag_service._retrieval import get_engine
@@ -603,13 +608,13 @@ async def resolve_entities(
         if ent_type == "series":
             # 独立作品实体:作品名本身就是检索目标,不再套 context_series
             context_series = None
-        aliases = ent.get("aliases") or []
-        if not isinstance(aliases, list):
-            aliases = []
+        # 端侧 LLM 路径不再读 entity.aliases:小模型会编造错误别名(如
+        # astesia/astgenne)污染 Rank0 精确 IN(...) 撞库。库内 aliases 列
+        # 是别名的单一可信来源。
         chars.append(CharacterEntity(
             name=name,
             context_series=str(context_series).strip() if context_series else None,
-            aliases=[str(a).strip() for a in aliases if a],
+            aliases=[],
             certainty="high",
         ))
 

@@ -286,33 +286,6 @@ EXAMPLES = """# 5. 完整示例
   ]
 }
 
-## 参考图模式示例
-用户：「基于参考图，生成角色在海边看日落」
-{
-  "brief": {
-    "subject": "sitting on the beach, looking at the sunset with a peaceful expression",
-    "scene_container": "beach at golden hour",
-    "action_relation": "seated, relaxed posture, wind in hair",
-    "camera": "upper body",
-    "view_angle": "slight low angle looking up at the sky",
-    "canvas": [1536, 1024],
-    "light_direction": "warm golden hour sunlight from behind",
-    "subject_ratio": "50-60%",
-    "situation_cause_chain": "calm evening -> feeling of solitude and peace -> wind tousling hair -> the moment: golden silhouette against the setting sun"
-  },
-  "three_layer": {
-    "hard_tags": ["1girl", "silver hair", "blue eyes", "long hair", "flowy dress", "beach", "sunset", "golden hour", "cinematic lighting"],
-    "soft_phrases": ["warm golden tones", "peaceful atmosphere", "gentle sea breeze"],
-    "nltags_block": "Place the subject seated on the sand, slightly right of center. Use warm backlight from the sunset to create a golden silhouette effect. Keep her face readable despite the backlighting. Add gentle bokeh in the background to separate the sky from the foreground. Frame with negative space at the top for the sky."
-  },
-  "args": {
-    "prompt_12": "worst quality, low quality, score_1, score_2, score_3, watermark, logo, bad anatomy, bad hands, bad feet, extra fingers, missing fingers, distorted face, blurry",
-    "width": 1536, "height": 1024, "steps": 6,
-    "filename_prefix": "anima/ref_mode_v1_0"
-  },
-  "tag_queries": []
-}
-
 ## 画师融合模式示例
 用户：「融合 wlop 和 sakimichan 画风，生成一个法师在森林里」
 {

@@ -135,6 +135,102 @@ def test_multiple_entities():
     print("[PASS] negative_elements 透传正确")
 
 
+def test_rank0_canonical_prefer():
+    """Rank0 短路：cn_name 多行命中时，优先选 name 无括号后缀的 canonical 行。
+
+    防偏置场景：数据库里同一 cn_name 同时存在裸行（如 henri）和带后缀行
+    （如 henry_(fire_emblem)），且后缀行 post_count 更高。
+    旧规则会被带偏，新规则应锁定裸 canonical 行。
+    """
+    eng = RetrievalEngine()
+    from anima_agent.tag_service._ner import NERResult, CharacterEntity
+
+    # 雾雨魔理沙：当前数据下只有裸行 kirisame_marisa，但仍验证短路命中 canonical
+    ner = NERResult(
+        characters=[
+            CharacterEntity(name="雾雨魔理沙", context_series=None, aliases=[]),
+        ],
+        negative_elements=[],
+        success=True,
+    )
+    result = eng.resolve(ner)
+    assert len(result.resolved) == 1
+    tag = result.resolved[0]
+    assert tag.en_tag == "kirisame_marisa", (
+        f"雾雨魔理沙 应直接命中 kirisame_marisa，got {tag.en_tag!r}"
+    )
+    assert tag.rank == 0
+    assert "(" not in tag.en_tag, (
+        f"不应返回带括号后缀的 en_tag: {tag.en_tag!r}"
+    )
+    print(f"[PASS] Rank0 canonical 优先: '雾雨魔理沙' → '{tag.en_tag}'")
+
+    # 博丽灵梦：验证另一典型东方角色同样锁定 canonical 行
+    ner = NERResult(
+        characters=[
+            CharacterEntity(name="博丽灵梦", context_series=None, aliases=[]),
+        ],
+        negative_elements=[],
+        success=True,
+    )
+    result = eng.resolve(ner)
+    tag = result.resolved[0]
+    assert tag.en_tag == "hakurei_reimu", (
+        f"博丽灵梦 应直接命中 hakurei_reimu，got {tag.en_tag!r}"
+    )
+    assert "(" not in tag.en_tag
+    print(f"[PASS] Rank0 canonical 优先: '博丽灵梦' → '{tag.en_tag}'")
+
+
+def test_rank0_canonical_when_suffix_post_count_higher():
+    """Rank0 短路：同 cn_name 多行，suffix post_count > canonical 时仍优先 canonical。
+
+    数据中存在大量此偏置风险（如 亨利、东堂葵、如月巴 等）。
+    通过直接查询 DB 找一个真实存在的偏置样本验证。
+    """
+    import sqlite3
+    from pathlib import Path
+    eng = RetrievalEngine()
+    from anima_agent.tag_service._ner import NERResult, CharacterEntity
+
+    db_path = Path(eng._db_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    # 找一个同 cn_name 下，suffix post_count > canonical post_count 的角色
+    sample = conn.execute("""
+        SELECT t1.cn_name
+        FROM tags t1
+        JOIN tags t2 ON t1.cn_name = t2.cn_name
+        WHERE (t1.name NOT LIKE '%(%' AND t1.name NOT LIKE '%（%')
+          AND (t2.name LIKE '%(%' OR t2.name LIKE '%（%')
+          AND t1.category = 4 AND t2.category = 4
+          AND t2.post_count > t1.post_count
+        LIMIT 1
+    """).fetchone()
+    conn.close()
+    if sample is None:
+        print("[SKIP] 当前数据库无 '裸+后缀 且 suffix post_count 更高' 样本")
+        return
+
+    cn = str(sample["cn_name"])
+    ner = NERResult(
+        characters=[
+            CharacterEntity(name=cn, context_series=None, aliases=[]),
+        ],
+        negative_elements=[],
+        success=True,
+    )
+    result = eng.resolve(ner)
+    tag = result.resolved[0]
+    assert "(" not in tag.en_tag, (
+        f"[{cn}] 期望选 canonical 行 (name 无括号)，got {tag.en_tag!r}"
+    )
+    print(
+        f"[PASS] Rank0 防偏置: '{cn}' → '{tag.en_tag}' "
+        f"(拒选带括号后缀的高 post_count 条目)"
+    )
+
+
 def test_no_pinyin_fallback_and_context_contains_allowed():
     """确认拼音兜底已移除；context_series 双端包含查询与动态去噪已启用。"""
     import anima_agent.tag_service._retrieval as ret_mod
@@ -154,6 +250,8 @@ if __name__ == "__main__":
 
     test_no_pinyin_fallback_and_context_contains_allowed()
     test_unresolved()
+    test_rank0_canonical_prefer()
+    test_rank0_canonical_when_suffix_post_count_higher()
     test_rank0_exact()
     test_rank0_with_alias()
     test_rank1_prefix()

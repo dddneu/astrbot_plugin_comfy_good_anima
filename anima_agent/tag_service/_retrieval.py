@@ -61,6 +61,16 @@ def _category_name(cat_id: int) -> str:
     return _TREE_CATEGORY_ID.get(cat_id, "general")
 
 
+def _is_canonical_name(name: str) -> bool:
+    """判断 en_tag 是否为 canonical（无括号后缀）形式。
+
+    用于 Rank 0 短路：cn_name 精确命中多行时，优先选 bare canonical 行，
+    避免被带 (xxx) 后缀的高 post_count 条目带偏（如
+    雾雨魔理沙 → kirisame_marisa 而非 kirisame_marisa_(touhou_project)）。
+    """
+    return "(" not in name and "（" not in name
+
+
 def calculate_purity_score(db_cn_name: str, input_name: str) -> tuple[int, int]:
     """动态去噪：无差别抹除括号内容，越接近基础形态得分越高。
 
@@ -100,6 +110,14 @@ class RetrievalEngine:
 
         如果命中，结合 context_series 验证（同名跨作品）。
         验证通过则直接返回，终止后续查询。
+
+        短路优先级（防偏置）:
+          1. 存在 cn_name 完全相等 且 name 是 canonical（无括号后缀）的行
+             → 直接按 post_count DESC 选最高，立刻返回，不进入后续模糊层。
+             这一层专门解决「雾雨魔理沙 → kirisame_marisa 而非
+             kirisame_marisa_(touhou_project)」这类被带偏问题。
+          2. context_series 跨作品过滤（处理同名跨 IP）。
+          3. 兜底：按 post_count DESC 选最高（数据无 canonical 行时使用）。
         """
         conn = self._connect()
         try:
@@ -122,6 +140,20 @@ class RetrievalEngine:
             if not rows:
                 return None
 
+            # 短路 1：canonical 行优先
+            canonical_rows = [
+                r for r in rows
+                if _is_canonical_name(str(r["name"]))
+            ]
+            if canonical_rows:
+                # rows 已按 post_count DESC 排序，canonical_rows[0] 即为
+                # canonical 集合中 post_count 最高者；直接返回，不再走模糊层
+                return ResolvedTag(
+                    original_name=name,
+                    en_tag=str(canonical_rows[0]["name"]),
+                    rank=0,
+                )
+
             # 跨作品验证：context_series 过滤
             if context_series:
                 cs_lower = context_series.lower().strip()
@@ -137,7 +169,7 @@ class RetrievalEngine:
                         rank=0,
                     )
 
-            # 无 context_series 或无跨作品匹配：取最高 post_count
+            # 兜底：无 canonical 行 + 无 context_series → post_count DESC 最高
             best = rows[0]
             return ResolvedTag(
                 original_name=name,

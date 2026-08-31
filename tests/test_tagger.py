@@ -104,9 +104,17 @@ FAKE_INFO = {
             "image": ("IMAGE", {}),
             "threshold": ("FLOAT", {"default": 0.35}),
             "character_threshold": ("FLOAT", {"default": 0.85}),
+            # 部分 Booru Tagger 包把这 4 个 widget 声明为 required(用户升级后
+            # 服务端按 required 校验,object_info 列出后会被 _fill_required_inputs 填上);
+            # 显式列出,确保 build_workflow 测试覆盖到这些字段。
+            "exclude_tags": ("STRING", {"default": ""}),
+            "use_best_threshold": ("BOOLEAN", {"default": False}),
+            "sort_tags": ("BOOLEAN", {"default": True}),
+            "trailing_comma": ("BOOLEAN", {"default": False}),
         }}
     },
     "PreviewText": {"input": {"required": {"text": ("STRING", {})}}},
+    "ShowText|pythongosssss": {"input": {"required": {"text": ("STRING", {})}}},
 }
 
 
@@ -123,7 +131,7 @@ class _FakeClient:
 def test_tagger_build_workflow():
     """模板 + /object_info → required 字段补齐、占位符替换、文本输出节点接线。"""
     t = RefImageTagger(_FakeClient())
-    wf = t._build_workflow(FAKE_INFO, "ref_abc.png", "PreviewText")
+    wf = t._build_workflow(FAKE_INFO, "ref_abc.png", "ShowText|pythongosssss")
 
     assert wf["1"]["inputs"]["image"] == "ref_abc.png"  # LoadImage 占位符替换
     assert wf["2"]["inputs"] == {
@@ -142,16 +150,26 @@ def test_tagger_build_workflow():
     assert n4["image"] == ["2", 0]
     assert n4["threshold"] == ["3", 2]
     assert n4["character_threshold"] == ["3", 3]
+    # Booru Tagger required widgets 由 overrides 兜底注入(部分 Booru Tagger 版本
+    # 把这 4 个字段声明为 required,但 object_info 在另一版本里只在 optional 暴露
+    # → 服务端 prompt_outputs_failed_validation 按 required 校验会拒)。
+    assert n4["exclude_tags"] == ""
+    assert n4["use_best_threshold"] is False
+    assert n4["sort_tags"] is True
+    assert n4["trailing_comma"] is False
     # 文本输出节点:运行时选中的 class + tags 接线
-    assert wf["5"]["class_type"] == "PreviewText"
+    assert wf["5"]["class_type"] == "ShowText|pythongosssss"
     assert wf["5"]["inputs"]["text"] == ["4", 0]
 
 
 def test_select_text_node():
-    """文本输出节点选择:已知候选优先,其次按名字扫描兜底,都没有则报错。"""
+    """文本输出节点选择:ShowText|pythongosssss 优先(主流,ComfyUI-Custom-Scripts),
+    PreviewText 排最后(第三方节点,object_info 里在但运行时缺包会报 missing_node_type)。"""
     t = RefImageTagger(_FakeClient())
-    assert t._select_text_node({"PreviewText": {}, "ShowText|pythongosssss": {}}) == "PreviewText"
-    assert t._select_text_node({"ShowText|pythongosssss": {}}) == "ShowText|pythongosssss"
+    # 多个候选共存 → ShowText|pythongosssss 优先,PreviewText 兜底
+    assert t._select_text_node({"PreviewText": {}, "ShowText|pythongosssss": {}}) == "ShowText|pythongosssss"
+    # 只有 PreviewText → 退到 PreviewText(候选最后兜底)
+    assert t._select_text_node({"PreviewText": {}}) == "PreviewText"
     # 用户实际安装的裸 ShowText(常见包)
     assert t._select_text_node({"ShowText": {}}) == "ShowText"
     # 名字扫描兜底(各家包命名不一)
@@ -206,6 +224,72 @@ def test_fill_required_inputs_override_falls_back_to_enum():
     assert out["model"] == "a"
     assert out["threshold"] == 0.5
     assert out["count"] == 1
+
+
+def test_fill_required_inputs_bare_string_spec():
+    """新版 ComfyUI 部分字段 spec 是裸类型字符串(精简格式) — _is_widget_spec 必须识别,
+    _default_widget_value 必须给出类型零值(无 default/meta)。"""
+    spec = {
+        "tag": "STRING",
+        "count": "INT",
+        "ratio": "FLOAT",
+        "flag": "BOOLEAN",
+    }
+    out = _fill_required_inputs(
+        "Foo", {}, {"Foo": {"input": {"required": spec}}}, {}
+    )
+    assert out["tag"] == ""
+    assert out["count"] == 0
+    assert out["ratio"] == 0.0
+    assert out["flag"] is False
+
+
+def test_fill_required_inputs_single_element_list_spec():
+    """单元素列表 spec(["STRING"])也是合法 widget spec,同样应被识别 + 给出零值。"""
+    spec = {
+        "name": ["STRING"],
+        "size": ["INT"],
+    }
+    out = _fill_required_inputs(
+        "Bar", {}, {"Bar": {"input": {"required": spec}}}, {}
+    )
+    assert out["name"] == ""
+    assert out["size"] == 0
+
+
+def test_fill_required_inputs_override_passthrough_when_undeclared():
+    """override 里有、但 object_info 根本没声明该字段(部分 Booru Tagger 版本差异:
+    object_info 里只在 optional 暴露,但服务端按 required 校验)→ 也必须写入 inputs,
+    避免漏 widget 触发 prompt_outputs_failed_validation。"""
+    # object_info 里完全不包含 Booru Tagger(模拟节点包升级后 object_info 暂时失效)
+    out = _fill_required_inputs(
+        "Booru Tagger",
+        {"tagger_model": ["3", 0], "image": ["2", 0]},  # 已有连接
+        {},  # object_info 空
+        {"exclude_tags": "", "use_best_threshold": False,
+         "sort_tags": True, "trailing_comma": False},
+    )
+    # 连接保持
+    assert out["tagger_model"] == ["3", 0]
+    assert out["image"] == ["2", 0]
+    # override 4 个 widget 全部注入
+    assert out["exclude_tags"] == ""
+    assert out["use_best_threshold"] is False
+    assert out["sort_tags"] is True
+    assert out["trailing_comma"] is False
+
+
+def test_fill_required_inputs_override_skips_list_values():
+    """override 是 list/tuple(连接型占位如 ["3", 0])时不要当 widget 值注入,
+    只填 widget 类型 — 避免覆盖已有连接。"""
+    out = _fill_required_inputs(
+        "Foo",
+        {"clip": ["3", 0]},
+        {},
+        {"clip": ["should_not_override", 0], "tag": "value"},  # 错误地想用 list 覆盖连接
+    )
+    assert out["clip"] == ["3", 0]  # 连接保持,不被 list 覆盖
+    assert out["tag"] == "value"     # 字符串 widget 正常填入
 
 
 # ── 竞态:执行快速失败时,真实错误必须浮出(而非 120s 超时空错误) ──────────
