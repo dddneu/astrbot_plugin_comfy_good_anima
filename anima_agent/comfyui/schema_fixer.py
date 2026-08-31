@@ -22,10 +22,14 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
+# AstrBot 框架统一走 astrbot.api.logger,标准 logging 在插件宿主里不输出
+try:
+    from astrbot.api import logger  # type: ignore
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 # 常见默认值(覆盖 required_input_missing)
 _DEFAULT_INT = 0

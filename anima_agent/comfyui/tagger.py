@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import logging
 import random
 import re
 import time
@@ -31,7 +30,12 @@ from anima_agent.comfyui.schema_injector import (
     load_workflow,
 )
 
-logger = logging.getLogger(__name__)
+# AstrBot 框架统一走 astrbot.api.logger,标准 logging 在插件宿主里不输出
+try:
+    from astrbot.api import logger  # type: ignore
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 TAGGER_WORKFLOW_ID = "tagger-pixai"
 QWENVL_WORKFLOW_ID = "tagger-qwenvl"

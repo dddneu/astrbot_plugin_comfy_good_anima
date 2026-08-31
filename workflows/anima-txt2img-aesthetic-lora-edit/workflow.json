@@ -258,57 +258,13 @@
     "class_type": "Power Lora Loader (rgthree)",
     "inputs": {
       "model": [
-        "77",
-        0
-      ],
-      "clip": [
-        "77",
-        1
-      ]
-    }
-  },
-  "77": {
-    "class_type": "InstantReferenceLoRA",
-    "inputs": {
-      "model_strength": 0.4,
-      "clip_strength": 0.4,
-      "profile": "anima",
-      "model": [
         "37",
         0
       ],
       "clip": [
         "8",
         0
-      ],
-      "images": [
-        "25",
-        0
-      ],
-      "vae": [
-        "4",
-        0
-      ],
-      "train_options": [
-        "78",
-        0
       ]
-    }
-  },
-  "78": {
-    "class_type": "ReferenceTrainOptions",
-    "inputs": {
-      "steps_override": 8,
-      "learning_rate_override": 0,
-      "network_dim_override": 0,
-      "network_alpha_override": 0,
-      "resolution_override": "",
-      "gradient_checkpointing": true,
-      "cache_latents": true,
-      "cache_text_encoder_outputs": true,
-      "seed_override": -1,
-      "force_retrain": false,
-      "train_batch_size_override": 0
     }
   },
   "80": {

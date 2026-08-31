@@ -527,7 +527,7 @@ async def resolve_cn_tags(
 
     # Stage 1: LLM NER
     ner_result = await extract_entities(user_text, llm_complete)
-    print(ner_result)
+    logger.debug("[resolve_cn_tags] NER: %s", ner_result)
     if not ner_result.success:
         logger.warning("[resolve_cn_tags] NER 失败，降级返回空")
         return [], [], []
@@ -543,8 +543,7 @@ async def resolve_cn_tags(
     nltags = [tag.original_name for tag in retrieval.resolved if tag.fallback_nl]
     negative = retrieval.negative_elements
 
-    print(confirmed)
-
+    logger.debug("[resolve_cn_tags] confirmed=%s nltags=%s", confirmed, nltags)
     if nltags:
         logger.info(
             "[resolve_cn_tags] 原文 %r → confirmed=%s, nltags=%s",

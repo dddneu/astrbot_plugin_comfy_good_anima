@@ -30,7 +30,7 @@ def test_small_edit_prompt_requires_compact_visual_anchor():
 
     # 后端解析依赖的 args 字段槽位必须齐全
     for field in ("left_anchor", "right_edit", "character_dna_tags", "edited_tags",
-                  "negative_tags", "style_modifiers"):
+                  "negative_tags", "style_modifiers", "style_consistency"):
         assert f'"{field}"' in system_prompt, field
     # 新结构:双步解构思考 + 锚点过滤 + 意图解析
     assert "step1_intent_decomposition" in system_prompt

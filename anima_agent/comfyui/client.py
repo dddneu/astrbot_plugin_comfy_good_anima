@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from typing import Optional
 
@@ -28,7 +27,12 @@ from anima_agent.comfyui.event_router import (
 )
 from anima_agent.comfyui.schema_injector import _detect_ext
 
-logger = logging.getLogger(__name__)
+# AstrBot 框架统一走 astrbot.api.logger,标准 logging 在插件宿主里不输出
+try:
+    from astrbot.api import logger  # type: ignore
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 1800.0  # 30 分钟,对齐 COMFYUI_SKILL_RUN_TIMEOUT_MS
 

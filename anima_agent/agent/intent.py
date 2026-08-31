@@ -22,14 +22,18 @@ seed 语义(由调用方执行,这里只出决定):
 from __future__ import annotations
 
 import json
-import logging
 import re
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 from anima_agent.agent.compat import maybe_await
 
-logger = logging.getLogger(__name__)
+# AstrBot 框架统一走 astrbot.api.logger,标准 logging 在插件宿主里不输出
+try:
+    from astrbot.api import logger  # type: ignore
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 NEW = "new"
 MODIFY = "modify"
@@ -206,7 +210,7 @@ class IntentRouter:
         try:
             resolved = await maybe_await(self.artist_resolver(candidates))
         except Exception as e:
-            print(f"[intent] artist resolver failed: {e}")
+            logger.warning("[intent] artist resolver failed: %s", e)
             return []
         out: list[str] = []
         seen: set[str] = set()
@@ -272,5 +276,5 @@ class IntentRouter:
             return IntentDecision(intent, conf, "llm",
                                 workflow_id=_WORKFLOW_FOR_INTENT.get(intent, ""))
         except Exception as e:
-            print(f"[intent] LLM intent classify failed: {e}")
+            logger.warning("[intent] LLM intent classify failed: %s", e)
             return None

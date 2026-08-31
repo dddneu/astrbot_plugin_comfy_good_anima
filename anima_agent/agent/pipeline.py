@@ -18,13 +18,18 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import logging
 import random
 import re
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+# AstrBot 框架统一走 astrbot.api.logger,标准 logging 在插件宿主里不输出
+try:
+    from astrbot.api import logger  # type: ignore
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 from anima_agent._paths import WORKFLOW_ROOT
 from anima_agent.agent.draftsman import DraftResult
 from anima_agent.agent.react_agent import ReActDraftsman, SafetyReject
@@ -42,8 +47,6 @@ from anima_agent.agent.react_agent import TUNE_PARAMS
 from anima_agent.agent.prompts import assemble_edit_prompt, assemble_edit_negative
 from anima_agent.tag_service import DanbooruTagService, TagQuery
 from anima_agent.task_tracker import TaskTracker, TaskStatus
-
-logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 2  # 自审不过时的最大重出轮数
 
@@ -367,11 +370,19 @@ class AgentPipeline:
                 # style_modifiers: 画风/画师/全局光影尾缀
                 style_modifiers = getattr(draft.args, "style_modifiers", "") or ""
 
+                # style_consistency: 画风一致性决策（lock=保留原画风, loose=允许画风变更）
+                style_consistency = getattr(draft.args, "style_consistency", "") or ""
+
+                # style_nltags_block: LLM 自定义画风一致性描述（可选，优先于默认模板）
+                style_nltags_block = getattr(draft.args, "style_nltags_block", "") or ""
+
                 from anima_agent.agent.prompts import assemble_edit_prompt
 
                 prompt_2 = assemble_edit_prompt(
                     left_anchor=left_anchor,
                     right_edit=right_edit,
+                    style_consistency=style_consistency,
+                    style_nltags_block=style_nltags_block,
                     style_modifiers=style_modifiers,
                     character_dna_tags=character_dna_tags_str,
                     edited_tags=edited_tags_str,
@@ -388,11 +399,12 @@ class AgentPipeline:
                 # 保留 left_anchor/right_edit 在 args 里以便 debug / schema 注入
                 draft.args.left_anchor = left_anchor
                 draft.args.right_edit = right_edit
-                print(f"[pipeline] edit mode: left_anchor={left_anchor[:80]}")
-                print(f"[pipeline] edit mode: right_edit={right_edit[:80]}")
-                print(f"[pipeline] edit mode: prompt_2={draft.args.prompt_2[:200]}")
+                logger.info("[pipeline] edit mode: left_anchor=%s", left_anchor[:80])
+                logger.info("[pipeline] edit mode: right_edit=%s", right_edit[:80])
+                logger.info("[pipeline] edit mode: prompt_2=%s", draft.args.prompt_2[:200])
             else:
                 # 3. 重新组装 prompt_11
+                logger.info("[pipeline] 组装前 hard_tags=%s", draft.three_layer.hard_tags)
                 draft.args.prompt_11 = draft.three_layer.assemble()
 
             # 4. 自审:代码化硬约束
@@ -468,8 +480,8 @@ class AgentPipeline:
                 raise
 
         stages_str = " | ".join(f"{k}={v:.1f}s" for k, v in t_stage.items())
-        print(f"[pipeline] 总耗时={total:.1f}s | {stages_str} | workflow={workflow_id} | seed={effective_args.get('seed', '?')}")
-        print(f"[pipeline] prompt_11={(draft.args.prompt_11 or '')[:120]}")
+        logger.info("[pipeline] 总耗时=%.1fs | %s | workflow=%s | seed=%s", total, stages_str, workflow_id, effective_args.get('seed', '?'))
+        logger.info("[pipeline] prompt_11=%s", (draft.args.prompt_11 or '')[:120])
 
         return GenerationResult(
             prompt_id=prompt_id,
@@ -658,16 +670,35 @@ class AgentPipeline:
     def _replace_anchor_tag(hard_tags: list[str], spec: dict, confirmed_prompt: str) -> list[str]:
         """用 confirmed tag 替换 LLM 给的同锚点候选。
 
-        策略:如果 confirmed 不在列表里,且列表里有该锚点的未确认候选(含 keyword),
-        替换之;否则追加。
+        策略:keyword 必须精确匹配整个 token(或 token 的根名,忽略 _(series) 后缀),
+        否则 series keyword 会把角色 tag 整个吃掉。
+        例:
+          - kw="astesia", confirmed="astesia_(arknights)",
+            hard_tags=["astesia_(arknights)"] → 已在列表,返回
+          - kw="astesia", confirmed="astesia_(arknights)",
+            hard_tags=["astesia"] → 替换 astesia → astesia_(arknights)
+          - kw="arknights", confirmed="arknights",
+            hard_tags=["astesia_(arknights)"] → 不替换(防止系列 keyword 把角色 tag 吃掉)
+          - kw="arknights", confirmed="arknights",
+            hard_tags=["arknights"] → 已在列表,返回
         """
         if confirmed_prompt in hard_tags:
             return hard_tags
-        keyword = (spec.get("keyword") or spec.get("prefix") or "").lstrip("@").lower()
+        keyword = (spec.get("keyword") or spec.get("prefix") or "").lstrip("@").lower().strip()
+        keyword_norm = keyword.replace("_", " ").replace("-", " ").strip()
         replaced = False
         out: list[str] = []
         for t in hard_tags:
-            if keyword and keyword in t.lower() and not replaced:
+            if replaced or not keyword_norm:
+                out.append(t)
+                continue
+            bare = _strip_weight_suffix(t).lower().strip()
+            bare_norm = bare.replace("_", " ").replace("-", " ").strip()
+            # 提取根名:括号前的部分(strip 系列后缀,如 astesia_(arknights) → astesia)
+            root = bare.split("(", 1)[0].rstrip("_").rstrip()
+            root_norm = root.replace("_", " ").replace("-", " ").strip()
+            # 精确匹配:全 token 相等 OR 根名相等
+            if bare_norm == keyword_norm or root_norm == keyword_norm:
                 out.append(confirmed_prompt)
                 replaced = True
             else:
@@ -977,7 +1008,7 @@ class AgentPipeline:
                 patched_nodes.append((nid, ct, inputs))
 
         for nid, ct, inputs in patched_nodes:
-            print(f"[ref_image] {ct}({nid}) inputs={inputs}")
+            logger.info("[ref_image] %s(%s) inputs=%s", ct, nid, inputs)
         return out
 
     async def _patch_fl_sampler(
@@ -1034,10 +1065,7 @@ class AgentPipeline:
                     clamped = _clamp_tune_value(arg_key, val, None)
                     inputs[field] = clamped
                 node["inputs"] = inputs
-                print(f"[fls] FLS_SamplerV4({nid}) cfg={inputs.get('cfg')}, "
-                      f"sharpness={inputs.get('sharpness')}, "
-                      f"layer_filter={inputs.get('layer_filter')!r}, "
-                      f"step_decay={inputs.get('step_decay')}")
+                logger.info("[fls] FLS_SamplerV4(%s) cfg=%s, sharpness=%s, layer_filter=%r, step_decay=%s", nid, inputs.get('cfg'), inputs.get('sharpness'), inputs.get('layer_filter'), inputs.get('step_decay'))
                 patched = True
         else:
             # 扁平格式
@@ -1054,10 +1082,7 @@ class AgentPipeline:
                     clamped = _clamp_tune_value(arg_key, val, None)
                     inputs[field] = clamped
                 node["inputs"] = inputs
-                print(f"[fls] FLS_SamplerV4({nid}) cfg={inputs.get('cfg')}, "
-                      f"sharpness={inputs.get('sharpness')}, "
-                      f"layer_filter={inputs.get('layer_filter')!r}, "
-                      f"step_decay={inputs.get('step_decay')}")
+                logger.info("[fls] FLS_SamplerV4(%s) cfg=%s, sharpness=%s, layer_filter=%r, step_decay=%s", nid, inputs.get('cfg'), inputs.get('sharpness'), inputs.get('layer_filter'), inputs.get('step_decay'))
                 patched = True
         return out
 
@@ -1086,7 +1111,7 @@ class AgentPipeline:
                 for field, val in overrides.items():
                     if field in inputs:
                         inputs[field] = val
-                print(f"[artist] AnimaArtistOptions({nid}) inputs={inputs}")
+                logger.info("[artist] AnimaArtistOptions(%s) inputs=%s", nid, inputs)
         else:
             for nid, node in out.items():
                 if node.get("class_type") != "AnimaArtistOptions":
@@ -1094,7 +1119,7 @@ class AgentPipeline:
                 for field, val in overrides.items():
                     if field in node.get("inputs", {}):
                         out[nid]["inputs"][field] = val
-                print(f"[artist] AnimaArtistOptions({nid}) inputs={out[nid]['inputs']}")
+                logger.info("[artist] AnimaArtistOptions(%s) inputs=%s", nid, out[nid]['inputs'])
         return out
 
     def _patch_ref_training_options(self, workflow: dict, args: Optional[dict] = None) -> dict:
@@ -1130,7 +1155,7 @@ class AgentPipeline:
                 for field, val in overrides[cls].items():
                     if field in inputs:
                         inputs[field] = val
-                print(f"[ref-train] {cls}({nid}) {overrides[cls]}")
+                logger.info("[ref-train] %s(%s) %s", cls, nid, overrides[cls])
         else:
             for nid, node in out.items():
                 cls = node.get("class_type", "")
@@ -1139,7 +1164,7 @@ class AgentPipeline:
                 for field, val in overrides[cls].items():
                     if field in node.get("inputs", {}):
                         out[nid]["inputs"][field] = val
-                print(f"[ref-train] {cls}({nid}) {overrides[cls]}")
+                logger.info("[ref-train] %s(%s) %s", cls, nid, overrides[cls])
         return out
 
     async def _patch_workflow_nodes(
@@ -1257,7 +1282,7 @@ class AgentPipeline:
                     if field in all_spec:
                         inputs[field] = _clamp_tune_value(arg_key, val, None)
                 node["inputs"] = inputs
-                print(f"[instantref] {INSTANT_REF_CLASS}({nid}) inputs={inputs}")
+                logger.info("[instantref] %s(%s) inputs=%s", INSTANT_REF_CLASS, nid, inputs)
                 patched_any = True
         else:
             for nid, node in out.items():
@@ -1282,7 +1307,7 @@ class AgentPipeline:
                     if field in all_spec:
                         inputs[field] = _clamp_tune_value(arg_key, val, None)
                 node["inputs"] = inputs
-                print(f"[instantref] {INSTANT_REF_CLASS}({nid}) inputs={inputs}")
+                logger.info("[instantref] %s(%s) inputs=%s", INSTANT_REF_CLASS, nid, inputs)
             patched_any = True
         if not patched_any:
             logger.warning("工作流未找到 %s 节点", INSTANT_REF_CLASS)
@@ -1308,7 +1333,7 @@ class AgentPipeline:
         每段耗时打印,方便排查"传图慢"。
         """
         if ref_image_filename:
-            print(f"[ref_image] 复用 tagger 已上传图片 {ref_image_filename!r}(省一次上传)")
+            logger.info("[ref_image] 复用 tagger 已上传图片 %r(省一次上传)", ref_image_filename)
             workflow, _ = self.injector.load(workflow_id)
             workflow = await self._patch_workflow_nodes(workflow, args, workflow_id=workflow_id)
             payload, effective = self.injector.build_payload(
@@ -1336,16 +1361,16 @@ class AgentPipeline:
                 )
                 # 检查占位符是否真的被替换(上传失败/无占位符时 inject 原样返回)
                 if not _has_ref_placeholder(workflow):
-                    print(f"[ref_image] multipart 上传参考图成功(耗时 {time.monotonic()-t_upload:.2f}s)")
+                    logger.info("[ref_image] multipart 上传参考图成功(耗时 %.2fs)", time.monotonic()-t_upload)
                     payload, effective = self.injector.build_payload(
                         workflow_id, args, seed=seed, workflow=workflow
                     )
                     return _sync_fls_seeds(payload, effective.get("seed")), effective
                 logger.warning("ref image async inject failed(placeholder remains), fallback to base64")
-                print(f"[ref_image] multipart 上传失败(占位符残留),回退 base64(耗时 {time.monotonic()-t_upload:.2f}s)")
+                logger.info("[ref_image] multipart 上传失败(占位符残留),回退 base64(耗时 %.2fs)", time.monotonic()-t_upload)
             except Exception as e:
                 logger.warning("ref image async upload failed, fallback to base64: %s", str(e)[:200])
-                print(f"[ref_image] multipart 上传异常,回退 base64(耗时 {time.monotonic()-t_upload:.2f}s): {str(e)[:120]}")
+                logger.info("[ref_image] multipart 上传异常,回退 base64(耗时 %.2fs): %s", time.monotonic()-t_upload, str(e)[:120])
 
         # 回退:同步 base64 data URL 注入(注意:5MB+ 图会显著变慢,且旧版兼容)
         workflow, _ = self.injector.load(workflow_id)
@@ -1641,15 +1666,15 @@ async def _submit_with_fix(client: ComfyUIClient, payload: dict) -> tuple[str, d
         调用方需要它做「换 seed 重绘」(原样重发 = 与上次完全一致,只换 seed)。
     """
     # 打印提交到 ComfyUI 的完整输入
-    print(f"[pipeline] === ComfyUI Submit Input ===")
-    print(f"[pipeline] workflow: {payload.get('workflow', {}).get('last_node_id', 'N/A')}")
+    logger.info("[pipeline] === ComfyUI Submit Input ===")
+    logger.info("[pipeline] workflow: %s", payload.get('workflow', {}).get('last_node_id', 'N/A'))
     # 打印 prompt 字段（包含所有节点输入）
     prompt_data = payload.get("prompt", {})
     for node_id, node_inputs in prompt_data.items():
         if isinstance(node_inputs, dict):
             inputs_str = str(node_inputs)[:500]  # 限制长度
-            print(f"[pipeline] node[{node_id}]: {inputs_str}")
-    print(f"[pipeline] =============================")
+            logger.info("[pipeline] node[%s]: %s", node_id, inputs_str)
+    logger.info("[pipeline] =============================")
 
     current_payload = payload
     for attempt in range(1, MAX_FIX_ROUNDS + 1):
@@ -1667,9 +1692,9 @@ async def _submit_with_fix(client: ComfyUIClient, payload: dict) -> tuple[str, d
                 for f, v in fields.items()
             }
             unfixed = stats.get("unfixed", [])
-            print(f"[pipeline] ComfyUI 提交被拒(第{attempt}次): 修正了 {len(changed)} 个字段: {changed}")
+            logger.info("[pipeline] ComfyUI 提交被拒(第%d次): 修正了 %d 个字段: %s", attempt, len(changed), changed)
             if unfixed:
-                print(f"[pipeline]   未修正: {unfixed}")
+                logger.info("[pipeline]   未修正: %s", unfixed)
             current_payload = fixed
 
 

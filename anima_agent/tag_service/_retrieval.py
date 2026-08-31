@@ -12,14 +12,18 @@ Rank 1 前缀/包含查询:
 
 from __future__ import annotations
 
-import logging
 import re
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+# AstrBot 框架统一走 astrbot.api.logger,标准 logging 在插件宿主里不输出
+try:
+    from astrbot.api import logger  # type: ignore
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 # NER 置信度
 

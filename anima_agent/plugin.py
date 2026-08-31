@@ -19,10 +19,22 @@ from pathlib import Path as _Path
 
 import asyncio
 import copy
+import inspect
 import json as _json
-import logging
+import os
+import random
+import sys
+import tempfile
 import time
-from typing import Callable, Optional
+from contextvars import ContextVar
+from pathlib import Path
+
+# AstrBot 框架统一走 astrbot.api.logger,标准 logging 在插件宿主里不输出
+try:
+    from astrbot.api import logger  # type: ignore
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 from anima_agent.agent.intent import AMBIGUOUS, ARTIST_MIXER, MODIFY, NEW, IntentRouter
 from anima_agent.agent.pipeline import (
@@ -36,8 +48,6 @@ from anima_agent.comfyui.client import ComfyUIClient
 from anima_agent.comfyui.event_router import ComfyUIInterrupted
 from anima_agent.session import SessionContext, SessionStore
 from anima_agent.task_tracker import TaskTracker
-
-logger = logging.getLogger(__name__)
 
 # 话里提到这些词 → 认为在反馈上一张参考图(即使没附图也复用)
 _REF_FEEDBACK_MARKERS = ("参考图", "参考", "约束", "不像", "相似", "还原", "一致", "照")
@@ -295,14 +305,16 @@ class AnimaAgentPlugin:
                 tagger_result = await self.ref_tagger.run(ref_image)
                 ref_tags = tagger_result.fused_tags
                 ref_image_filename = tagger_result.filename
-                print(
-                    f"[tagger] 打标成功(miaoshouai={len(tagger_result.miaoshouai_tags)}字符,"
-                    f"耗时{time.monotonic() - t_tag:.1f}s,已上传 {ref_image_filename}): "
-                    f"{ref_tags[:160]}"
+                logger.info(
+                    "[tagger] 打标成功(miaoshouai=%d字符, 耗时%.1fs, 已上传 %s): %s",
+                    len(tagger_result.miaoshouai_tags),
+                    time.monotonic() - t_tag,
+                    ref_image_filename,
+                    ref_tags[:160],
                 )
             except Exception as e:
                 logger.warning("参考图打标失败,继续无 tag 上下文: %r", e)
-                print(f"[tagger] 参考图打标失败(继续): {type(e).__name__}: {e}")
+                logger.warning("[tagger] 参考图打标失败(继续): %s: %s", type(e).__name__, e)
 
         # 意图识别前先解析画师(标签库确认「ke-ta」是不是真实 artist)
         from anima_agent.agent.intent import extract_artist_candidates
@@ -322,8 +334,15 @@ class AnimaAgentPlugin:
             confirmed_artists=confirmed_artists,
             ref_tags=ref_tags,
         )
-        print(
-            f"[意图] prompt={user_text[:80]} | 意图={decision.intent} 置信={decision.confidence:.2f} 来源={decision.source} | workflow={workflow_id}→{decision.workflow_id or '(同)'} | ref_image={bool(ref_image)}"
+        logger.info(
+            "[意图] prompt=%s | 意图=%s 置信=%.2f 来源=%s | workflow=%s→%s | ref_image=%s",
+            user_text[:80],
+            decision.intent,
+            decision.confidence,
+            decision.source,
+            workflow_id,
+            decision.workflow_id or "(同)",
+            bool(ref_image),
         )
         t_intent = time.monotonic() - t1
 
@@ -351,8 +370,8 @@ class AnimaAgentPlugin:
                 ref_image_filename = stored_fn
                 if not ref_tags:
                     ref_tags = stored_tags or ""
-                print(
-                    f"[handle_draw] 复用上一张参考图 {stored_fn!r}(用户未附图,按参考反馈/修改处理)"
+                logger.info(
+                    "[handle_draw] 复用上一张参考图 %r(用户未附图,按参考反馈/修改处理)", stored_fn
                 )
 
         # 意图驱动工作流切换（由 intent.py 的 IntentDecision.workflow_id 决定）
@@ -365,9 +384,11 @@ class AnimaAgentPlugin:
         resolved_workflow = _resolve_ref_workflow(pre_workflow, has_ref)
         if resolved_workflow != pre_workflow:
             effective_workflow = resolved_workflow
-            print(
-                f"[handle_draw] 参考图判定 → 工作流: {effective_workflow} "
-                f"(has_ref={has_ref}, 原: {pre_workflow})"
+            logger.info(
+                "[handle_draw] 参考图判定 → 工作流: %s (has_ref=%s, 原: %s)",
+                effective_workflow,
+                has_ref,
+                pre_workflow,
             )
             if not has_ref and _is_ref_capable_workflow(pre_workflow):
                 # 配置/关键词选了参考工作流,但没附图 → 回退基础版本,必须让用户知道
@@ -434,8 +455,12 @@ class AnimaAgentPlugin:
 
         label = "修改重绘" if decision.is_modification else "新图"
         total = time.monotonic() - t0
-        print(
-            f"[handle_draw] 完成 | status={'done' if result.image_bytes_list else 'queued'} | 总耗时={total:.1f}s | seed={result.args.seed} | subject={str(result.brief.subject or '')[:40]}"
+        logger.info(
+            "[handle_draw] 完成 | status=%s | 总耗时=%.1fs | seed=%s | subject=%s",
+            "done" if result.image_bytes_list else "queued",
+            total,
+            result.args.seed,
+            str(result.brief.subject or "")[:40],
         )
         note = ("\n⚠️ " + "\n".join(route_notes)) if route_notes else ""
         prompt_suffix = self._prompt_reply_suffix(result)

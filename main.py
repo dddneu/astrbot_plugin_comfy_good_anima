@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 import os
 import random
 import sys
@@ -23,11 +22,10 @@ from contextvars import ContextVar
 from pathlib import Path
 
 from astrbot.api import AstrBotConfig
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import File, Image, Node, Nodes, Plain, Reply
 from astrbot.api.star import Context, Star, register
-
-logger = logging.getLogger(__name__)
 
 
 class VisionNotSupported(Exception):
@@ -370,14 +368,19 @@ async def _collect_ref_image(event: AstrMessageEvent) -> bytes | None:
 
     chain = getattr(getattr(event, "message_obj", None), "message", None)
     if not chain:
-        print("[ref_image] 消息链为空,无参考图")
+        logger.info("[ref_image] 消息链为空,无参考图")
         return None
-    print(f"[ref_image] 消息组件: {[type(c).__name__ for c in chain]}")
+    logger.info("[ref_image] 消息组件: %s", [type(c).__name__ for c in chain])
 
     async def _try(comp) -> bytes | None:
         data = await _read_image_component(comp)
         if data is None:
-            print(f"[ref_image] 组件 {type(comp).__name__} 读取失败 url={getattr(comp, 'url', '')[:60]!r} file={getattr(comp, 'file', '')[:60]!r}")
+            logger.info(
+                "[ref_image] 组件 %s 读取失败 url=%r file=%r",
+                type(comp).__name__,
+                getattr(comp, 'url', '')[:60],
+                getattr(comp, 'file', '')[:60],
+            )
         return data
 
     found_image = False
@@ -386,7 +389,7 @@ async def _collect_ref_image(event: AstrMessageEvent) -> bytes | None:
             found_image = True
             data = await _try(comp)
             if data:
-                print(f"[ref_image] 命中直接附图 ({len(data)} bytes)")
+                logger.info("[ref_image] 命中直接附图 (%d bytes)", len(data))
                 return data
         elif isinstance(comp, CompReply) and getattr(comp, "chain", None):
             for sub in comp.chain:
@@ -394,12 +397,12 @@ async def _collect_ref_image(event: AstrMessageEvent) -> bytes | None:
                     found_image = True
                     data = await _try(sub)
                     if data:
-                        print(f"[ref_image] 命中引用消息中的图 ({len(data)} bytes)")
+                        logger.info("[ref_image] 命中引用消息中的图 (%d bytes)", len(data))
                         return data
     if found_image:
-        print("[ref_image] 消息含 Image 组件但全部读取失败,本次按无参考图处理")
+        logger.info("[ref_image] 消息含 Image 组件但全部读取失败,本次按无参考图处理")
     else:
-        print("[ref_image] 消息无 Image 组件,本次按无参考图处理")
+        logger.info("[ref_image] 消息无 Image 组件,本次按无参考图处理")
     return None
 
 
@@ -458,14 +461,15 @@ class AnimaStar(Star):
         )
         self.workflow = config.get("workflow") or "anima-txt2img-aesthetic-lora"
         _ref_default = "instantref" in self.workflow or "-ref" in self.workflow
-        print(
-            f"[配置] 默认工作流: {self.workflow}"
-            + ("(参考工作流:需要附图,未附图时自动回退基础版本)" if _ref_default else "")
+        logger.info(
+            "[配置] 默认工作流: %s%s",
+            self.workflow,
+            "(参考工作流:需要附图,未附图时自动回退基础版本)" if _ref_default else "",
         )
         # 模型大小展示
         llm_ms = str(config.get("llm_model_size") or "small")
         llm_ms_desc = "端侧小模型" if llm_ms == "small" else "云端大模型"
-        print(f"[配置] LLM 出稿模式: {llm_ms} ({llm_ms_desc})")
+        logger.info("[配置] LLM 出稿模式: %s (%s)", llm_ms, llm_ms_desc)
         # 随机画师策略展示(便于自检)
         ram = str(config.get("random_artist_mode") or "pool")
         ram_n = int(config.get("random_artist_top_n") or 100)
@@ -476,7 +480,7 @@ class AnimaStar(Star):
             ram_desc = f"固定 @{(ram_fixed or '<未填>')}"
         else:
             ram_desc = f"随机池 top-{ram_n}"
-        print(f"[配置] 随机画师策略: {ram} ({ram_desc})")
+        logger.info("[配置] 随机画师策略: %s (%s)", ram, ram_desc)
         self.send_progress = bool(config.get("send_progress", True))
         self.pdf_send = bool(config.get("pdf_send", False))  # 图片转加密 PDF 发送
         self.reply_quote = bool(config.get("reply_quote", True))  # 回复引用触发消息

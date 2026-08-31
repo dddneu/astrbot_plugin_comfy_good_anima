@@ -10,9 +10,15 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from typing import Literal, Optional
+
+# AstrBot 框架统一走 astrbot.api.logger,标准 logging 在插件宿主里不输出
+try:
+    from astrbot.api import logger  # type: ignore
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 from anima_agent.agent.compat import maybe_await
 from anima_agent.agent.draftsman import DraftResult
@@ -20,8 +26,6 @@ from anima_agent.agent.schemas import AnimaArgs, ThreeLayerPrompt, VisualBrief
 from anima_agent.agent.prompts import build_draftsman_prompt, DRAFT_JSON_SKELETON
 from anima_agent.agent.utils import extract_json
 from pydantic import ValidationError
-
-logger = logging.getLogger(__name__)
 
 MAX_PARSE_RETRIES = 2
 
@@ -241,7 +245,7 @@ class SimpleAgent:
                     distilled = (distilled or "").strip()
                     if distilled:
                         distilled_data = extract_json(distilled)
-                        print(distilled_data)
+                        logger.debug("[distill] %s", distilled_data)
                         if isinstance(distilled_data, dict):
                             if distilled_data.get("structured_intent"):
                                 distilled = str(distilled_data["structured_intent"]).strip()
@@ -276,10 +280,12 @@ class SimpleAgent:
             )
 
             if effective_model_size == "small" and merged_entities is not None:
+                logger.info("[Edit实体解析] 小模型合并蒸馏路径 → resolve_entities(entities=%s)", merged_entities)
                 confirmed_tags, _nltags, _neg = await resolve_entities(
                     merged_entities, merged_negative
                 )
             else:
+                logger.info("[Edit实体解析] 兜底 NER 路径")
                 confirmed_tags, _nltags, _neg = await resolve_cn_tags(
                     user_prompt, self.llm_complete
                 )
@@ -305,10 +311,11 @@ class SimpleAgent:
                     )
                 )
                 distilled = (distilled or "").strip()
+                logger.info("[小模型蒸馏原始输出] %s", distilled)
                 if distilled:
                     # 优先取 structured_intent（结构化自然语言），兼容旧 refined_intent 字段
                     distilled_data = extract_json(distilled)
-                    print(distilled_data)
+                    logger.debug("[distill] parsed=%s", distilled_data)
                     if isinstance(distilled_data, dict):
                         if distilled_data.get("structured_intent"):
                             distilled = str(distilled_data["structured_intent"]).strip()
@@ -343,10 +350,12 @@ class SimpleAgent:
         )
 
         if merged_entities is not None:
+            logger.info("[实体解析] 小模型合并蒸馏路径 → resolve_entities(entities=%s)", merged_entities)
             confirmed_en_tags, nltags, negative_from_ner = await resolve_entities(
                 merged_entities, merged_negative
             )
         else:
+            logger.info("[实体解析] 兜底 NER 路径 → resolve_cn_tags")
             confirmed_en_tags, nltags, negative_from_ner = await resolve_cn_tags(
                 user_prompt, self.llm_complete
             )
@@ -386,7 +395,7 @@ class SimpleAgent:
                 )
             )
             try:
-                return self._parse(resp)
+                return self._parse(resp, confirmed_en_tags=confirmed_en_tags)
             except SafetyReject:
                 # 安全拒绝:绝不重试(LLM 一致拒绝同一内容,重试无意义),
                 # 立刻穿透到 draft() 层的外层 except,再由 pipeline 拦成
@@ -452,7 +461,7 @@ class SimpleAgent:
         # 删除了所有关于 LoRA 调参、换衣服规则、JSON 骨架的冗余文本！
         return "\n".join(parts)
 
-    def _parse(self, resp: str) -> DraftResult:
+    def _parse(self, resp: str, *, confirmed_en_tags: Optional[list[str]] = None) -> DraftResult:
         data = extract_json(resp)
         if data and data.get("intent") == "reject":
             raise SafetyReject(data.get("reject_reason", "内容不符合安全规范"))
@@ -464,6 +473,14 @@ class SimpleAgent:
         three = ThreeLayerPrompt(
             **self._coerce_three_layer(data.get("three_layer"))
         )
+
+        # confirmed_en_tags 是检索引擎已确认的 tag，不依赖 LLM 转写，直接注入 hard_tags 头部
+        if confirmed_en_tags:
+            existing = {t.lower() for t in three.hard_tags}
+            for tag in reversed(confirmed_en_tags):  # reversed 保证顺序:最前是 confirmed
+                if tag.lower() not in existing:
+                    three.hard_tags.insert(0, tag)
+        logger.info("[_parse] hard_tags=%s", three.hard_tags)
 
         args_data = dict(data.get("args") or {})
 
@@ -702,6 +719,8 @@ class SimpleAgent:
             "edited_tags",
             "style_modifiers",
             "negative_tags",
+            "style_consistency",
+            "style_nltags_block",
         ):
             args_data[field_name] = normalize_prompt_value(args_data.get(field_name))
 
@@ -709,11 +728,15 @@ class SimpleAgent:
         right_edit = args_data["right_edit"]
         negative_tags = args_data["negative_tags"]
         style_modifiers = args_data["style_modifiers"]
+        style_consistency = args_data["style_consistency"]
+        style_nltags_block = args_data["style_nltags_block"]
 
         # 组装分屏 prompt —— pipeline 后续会在前面加质量前缀(safe/nsfw)
         assembled_positive = assemble_edit_prompt(
             left_anchor=left_anchor,
             right_edit=right_edit,
+            style_consistency=style_consistency or "",
+            style_nltags_block=style_nltags_block or "",
             style_modifiers=style_modifiers,
             character_dna_tags=args_data.get("character_dna_tags") or "",
             edited_tags=args_data.get("edited_tags") or "",

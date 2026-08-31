@@ -11,12 +11,16 @@ Schema:
 from __future__ import annotations
 
 import json
-import logging
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-logger = logging.getLogger(__name__)
+# AstrBot 框架统一走 astrbot.api.logger,标准 logging 在插件宿主里不输出
+try:
+    from astrbot.api import logger  # type: ignore
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Pydantic schema (as JSON schema string, injected into system prompt)

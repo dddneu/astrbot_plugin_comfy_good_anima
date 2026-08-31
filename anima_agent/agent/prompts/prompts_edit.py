@@ -17,6 +17,14 @@ if TYPE_CHECKING:
     from anima_agent.tag_service.service import DanbooruTagService
 
 
+# 画风一致性锚定模板。当 style_consistency="lock" 时注入到 prompt 最前方。
+# 作用：强制 DiT 保留原图的线条方式、配色、光影。
+STYLE_NLTAGS_TEMPLATE = (
+    "Place the character in the same artistic style with consistent "
+    "linework, cel shading, color palette, and lighting as the reference image."
+)
+
+
 # ──────────────────────────────────────────────────────────────────
 # Danbooru Tag Service (延迟加载)
 # ──────────────────────────────────────────────────────────────────
@@ -190,6 +198,8 @@ def _build_entity_hint(wd14_entity_tags: list[dict]) -> str:
 def assemble_edit_prompt(
     left_anchor: str,
     right_edit: str,
+    style_consistency: str = "",
+    style_nltags_block: str = "",
     style_modifiers: str = "",
     character_dna_tags: str = "",
     edited_tags: str = "",
@@ -199,6 +209,11 @@ def assemble_edit_prompt(
     DiT 特性: split screen 空间触发词(第1优先级对齐构图) + 自然语言锚定 →
     character_dna_tags(角色DNA紧贴锚定之后，防止DiT在复杂图片下角色失忆) +
     edited_tags(修改特征高权重) + style_modifiers(画风尾缀)
+
+    style_consistency 决策逻辑:
+    - "lock":  注入 STYLE_NLTAGS_TEMPLATE，强制保留原图画风。
+    - "loose": 不注入，让 style_modifiers 主导画风变更。
+    - 空值:   默认为 "lock"（保守策略）。
     """
     parts = []
 
@@ -207,26 +222,37 @@ def assemble_edit_prompt(
     character_dna_tags = normalize_prompt_value(character_dna_tags)
     edited_tags = normalize_prompt_value(edited_tags)
     style_modifiers = normalize_prompt_value(style_modifiers)
+    style_nltags_block = normalize_prompt_value(style_nltags_block)
 
-    # 0. 绝对优先的空间触发词（DiT 最先对齐构图）
+    # 0. 画风一致性锚定（仅当 style_consistency != "loose" 时注入）
+    # 优先使用 LLM 返回的自定义 style_nltags_block，否则用默认模板。
+    sc = style_consistency.strip().lower() if style_consistency else ""
+    if sc != "loose":
+        # 默认 "lock"，保守策略
+        if style_nltags_block:
+            parts.append(style_nltags_block)
+        else:
+            parts.append(STYLE_NLTAGS_TEMPLATE)
+
+    # 1. 绝对优先的空间触发词（DiT 最先对齐构图）
     parts.append("split screen, multiple views")
 
-    # 1. 自然语言空间锚定 — 左右分屏定位
+    # 2. 自然语言空间锚定 — 左右分屏定位
     parts.append(
         "A split screen image. "
         f"On the left side, {left_anchor.strip()}. "
         f"On the right side, {right_edit.strip()}.".replace("..", '.')
     )
 
-    # 2. character_dna_tags
+    # 3. character_dna_tags
     if character_dna_tags and character_dna_tags.strip():
         parts.append(character_dna_tags.strip())
 
-    # 3. edited_tags
+    # 4. edited_tags
     if edited_tags and edited_tags.strip():
         parts.append(_wrap_edited_tags(edited_tags.strip()))
 
-    # 4. 画风与全局修饰
+    # 5. 画风与全局修饰（仅当 style_consistency == "loose" 时有意义）
     if style_modifiers and style_modifiers.strip():
         parts.append(style_modifiers.strip())
 
