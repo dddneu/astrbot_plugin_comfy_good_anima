@@ -147,20 +147,21 @@ COT_GUIDANCE = """# 思考链（先想清楚再写 JSON）
 | 在哪？什么时间/天气？ | brief.scene_container |
 | **怎么画？景别？画布？** | **brief.camera + view_angle + canvas** |
 
-## ⚠️ 画布选择决策树（必须走这个流程）
+## ⚠️ 画布选择（必须严格执行）
 
-**第一步：根据景别选比例**
-- 头像/特写 → 1:1 正方
-- 半身像 → 3:4 竖幅
-- 全身/立绘 → 2:3 竖幅
-- 多人互动 → 3:2 横幅
-- 横向场景/远景 → 16:9 宽银幕
+**第一步：判断人数**
+- 单人 → 继续第二步
+- 多人 → 直接用 **3:2 横幅** (1536x1024)
 
-**第二步：根据复杂度选分辨率**
-- 简单构图（单人/纯色背景）→ 1024 级
-- 复杂构图（多人/精细背景/大场景）→ 1536 级
+**第二步：判断景别（仅单人）**
+- close-up（头像特写）→ 1:1 (1024x1024)
+- 其他（upper body / cowboy shot / full body）→ **3:4 竖幅** (1152x1536)
 
-**禁止默认 1:1**：只有头像/特写才用 1:1，其他一律按景别选比例！
+**⚠️ 常见错误：**
+- ❌ "一个女孩站着" → 不要用 1:1！应该用 3:4
+- ❌ "单人肖像" → 不要默认 1:1！只有 close-up 才用 1:1
+- ✅ "一个女孩半身像" → 3:4 (1152x1536)
+- ✅ "两个人对话" → 3:2 (1536x1024)
 
 ## situation_cause_chain（SCC）——叙事锚点
 格式：`起因 → 反应 → 可见后果 → 抓人瞬间`
@@ -227,10 +228,11 @@ EXAMPLES = """# Few-Shot 示例
     "setting": "教室，午后，窗边",
     "composition": "单人+安静氛围 → 半身像 + 平视 + 窗边柔光",
     "canvas_choice": {
-      "shot_type": "upper body（半身像）",
-      "ratio_reason": "半身像 → 3:4竖幅",
-      "resolution_reason": "单人简单构图 → 1024级",
-      "final": "[1152, 1536]"
+      "shot_type": "单人全身/立绘",
+      "ratio": "2:3",
+      "ratio_reason": "单人全身 → 2:3竖幅",
+      "resolution_reason": "默认1536级",
+      "final": "[1024, 1536]"
     },
     "narrative_anchor": "安静午后教室 → 她的孤寂通过空白表情浮现 → 柔光勾勒银发 → 定格：一个女孩在暖光中出神",
     "conflict_check": "solo ✓, upper body ✓, eye-level ✓"
@@ -276,9 +278,10 @@ EXAMPLES = """# Few-Shot 示例
     "setting": "末日废墟，破碎建筑，阴天",
     "composition": "多人+互动 → 全身 + 平视 + 散射光",
     "canvas_choice": {
-      "shot_type": "full body（全身）",
+      "shot_type": "多人全身（2girls full body）",
+      "ratio": "3:2",
       "ratio_reason": "多人互动 → 3:2横幅",
-      "resolution_reason": "多人+精细背景 → 1536级",
+      "resolution_reason": "默认1536级",
       "final": "[1536, 1024]"
     },
     "narrative_anchor": "末日废土 → 两个战士战后休息 → 太刀出鞘但垂下 → 定格：废墟中的沉默共守",
@@ -325,8 +328,9 @@ EXAMPLES = """# Few-Shot 示例
     "composition": "特写+活力 → 头像 + 平视 + 强烈阳光",
     "canvas_choice": {
       "shot_type": "close-up（头像/特写）",
+      "ratio": "1:1",
       "ratio_reason": "头像特写 → 1:1正方",
-      "resolution_reason": "单人简单构图 → 1024级",
+      "resolution_reason": "头像 → 1024级",
       "final": "[1024, 1024]"
     },
     "narrative_anchor": "阳光明媚 → 兴奋的猫娘 → 大笑+耳朵竖起 → 定格：阳光捕捉红瞳的特写纯真",
@@ -370,9 +374,10 @@ EXAMPLES = """# Few-Shot 示例
     "setting": "神社夜，红灯笼，石阶",
     "composition": "多人+张力 → 半身 + 平视 + 灯笼暖光",
     "canvas_choice": {
-      "shot_type": "upper body（半身像）",
+      "shot_type": "多人半身（2girls upper body）",
+      "ratio": "3:2",
       "ratio_reason": "多人互动 → 3:2横幅",
-      "resolution_reason": "多人+精细背景 → 1536级",
+      "resolution_reason": "默认1536级",
       "final": "[1536, 1024]"
     },
     "narrative_anchor": "神社夜宴 → 两个女人目光交错 → 仪式冷淡对峙 → 定格：灯笼光下刀锋般的对视",
@@ -420,10 +425,11 @@ JSON_SKELETON = """# JSON 输出骨架（只输出 JSON，不要其他文字）
     "setting": "环境 + 天气 + 时间",
     "composition": "构图策略：角色数+氛围 → 景别 + 视角 + 光源类型",
     "canvas_choice": {
-      "shot_type": "景别类型",
-      "ratio_reason": "景别 → 比例选择理由",
-      "resolution_reason": "复杂度 → 分辨率选择理由",
-      "final": "[width, height]"
+      "shot_type": "先写景别：close-up/upper body/cowboy shot/full body",
+      "ratio": "⚠️ 强制输出比例（2:3 或 3:4 或 1:1 或 3:2 或 16:9）← 必须唯一！",
+      "ratio_reason": "景别 → 为什么选这个比例",
+      "resolution_reason": "复杂度 → 1024级 或 1536级",
+      "final": "[width, height] ← 根据 ratio 和 resolution 填写"
     },
     "narrative_anchor": "SCC: 起因 → 反应 → 可见后果 → 抓人瞬间",
     "conflict_check": "输出前自查：solo/多人、景别、视角、视线、服装、光源是否互斥"
@@ -440,14 +446,14 @@ JSON_SKELETON = """# JSON 输出骨架（只输出 JSON，不要其他文字）
     "situation_cause_chain": "起因 → 反应 → 可见后果 → 抓人瞬间"
   },
   "three_layer": {
-    "hard_tags": ["离散tag1", "离散tag2"],
-    "soft_phrases": ["短语1", "短语2"],
-    "nltags_block": "Place [角色A] + 位置 + 动作. Place [角色B] + 位置 + 动作. Use [光源]. Keep [角色A表情]; Keep [角色B表情]. Frame [层次]. Light [轮廓]. Blur [虚实]."
+    "hard_tags": ["逗号分隔的离散tag：质量→人数→角色→外观→场景"],
+    "soft_phrases": ["1-3个短视觉短语"],
+    "nltags_block": "Place [主体] + 位置 + 动作. Use [光源] + 打在 [部位]. Keep [表情 + 视线]. Frame [层次]. Light [轮廓]. Blur [虚实]."
   },
   "args": {
-    "prompt_12": "基础负向词 + 场景追加词",
-    "width": 1024,
-    "height": 1536,
+    "prompt_12": "worst quality, low quality, bad anatomy, bad hands, 加上场景/景别追加词",
+    "width": 根据 canvas_choice.final 填写,
+    "height": 根据 canvas_choice.final 填写,
     "steps": 6,
     "filename_prefix": "anima/前缀"
   },

@@ -19,9 +19,10 @@ if TYPE_CHECKING:
 
 # 画风一致性锚定模板。当 style_consistency="lock" 时注入到 prompt 最前方。
 # 作用：强制 DiT 保留原图的线条方式、配色、光影。
+# 注意：DiT 通过 latent conditioning 自然保持画风，这里只需要简单的语言提示。
 STYLE_NLTAGS_TEMPLATE = (
-    "Place the character in the same artistic style with consistent "
-    "linework, cel shading, color palette, and lighting as the reference image."
+    "Maintain the same artistic style consistently across both sides of the image. "
+    "Keep the original linework, color palette, cel shading, and lighting."
 )
 
 
@@ -161,8 +162,14 @@ def generate_edit_prompts(
     # 构建 entity tags 提示
     entity_hint = _build_entity_hint(wd14_entity_tags)
 
+    # 结构：system → few_shots → json_schema → user_input
     messages = [{"role": "system", "content": config["system"]}]
     messages.extend(config["few_shots"])
+    
+    # 如果有 json_schema，作为最后一个 system 消息插入
+    if "json_schema" in config:
+        messages.append({"role": "system", "content": config["json_schema"]})
+    
     messages.append({
         "role": "user",
         "content": f"WD14 Tags: {wd14_tags}\nIntent: {user_intent}{entity_hint}",
